@@ -2,7 +2,7 @@ import os
 from django.test import TestCase
 from django.contrib.auth import get_user_model
 from django.conf import settings
-from unittest.mock import patch
+from unittest.mock import patch, MagicMock
 from apps.engine.models import Project, MediaAsset
 from apps.processor.tasks import process_video_render_task
 
@@ -176,6 +176,105 @@ class FetchBackgroundVideoFallbackTestCase(TestCase):
 
         self.assertIn('chunk_0', str(ctx.exception))
         self.assertIn('Aborting render to trigger refund', str(ctx.exception))
+
+
+class FetchBackgroundVideoOrientationTestCase(TestCase):
+    """
+    Unit tests to verify orientation parameter locking on Pexels video search queries.
+    """
+
+    def setUp(self):
+        import tempfile
+        self.media_root = tempfile.mkdtemp()
+        self.project_id = 'test_project_orientation'
+        self.clips_dir = os.path.join(
+            self.media_root, 'projects', self.project_id, 'clips'
+        )
+        os.makedirs(self.clips_dir, exist_ok=True)
+
+    def tearDown(self):
+        import shutil
+        shutil.rmtree(self.media_root, ignore_errors=True)
+
+    @patch('apps.processor.services.media_service.time.sleep', return_value=None)
+    @patch('apps.processor.services.media_service.requests.Session')
+    @patch('apps.processor.services.media_service.settings')
+    def test_landscape_orientation_parameter(self, mock_settings, mock_session_cls, _mock_sleep):
+        from apps.processor.services.media_service import fetch_background_video
+        mock_settings.TESTING = False
+        mock_settings.PEXELS_API_KEY = 'fake-key'
+        mock_settings.MEDIA_ROOT = self.media_root
+
+        mock_session = mock_session_cls.return_value
+        
+        mock_search_response = MagicMock()
+        mock_search_response.status_code = 200
+        mock_search_response.json.return_value = {
+            "videos": [
+                {
+                    "video_files": [
+                        {
+                            "file_type": "video/mp4",
+                            "width": 1920,
+                            "height": 1080,
+                            "link": "https://example.com/video.mp4"
+                        }
+                    ]
+                }
+            ]
+        }
+        
+        mock_download_response = MagicMock()
+        mock_download_response.__enter__.return_value.status_code = 200
+        mock_download_response.__enter__.return_value.iter_content.return_value = [b'\x00' * 1024]
+        
+        mock_session.get.side_effect = [mock_search_response, mock_download_response]
+
+        fetch_background_video('stars', project_id=self.project_id, chunk_index=0, layout='landscape')
+
+        called_args = mock_session.get.call_args_list
+        search_url = called_args[0][0][0]
+        self.assertIn('orientation=landscape', search_url)
+
+    @patch('apps.processor.services.media_service.time.sleep', return_value=None)
+    @patch('apps.processor.services.media_service.requests.Session')
+    @patch('apps.processor.services.media_service.settings')
+    def test_vertical_orientation_parameter(self, mock_settings, mock_session_cls, _mock_sleep):
+        from apps.processor.services.media_service import fetch_background_video
+        mock_settings.TESTING = False
+        mock_settings.PEXELS_API_KEY = 'fake-key'
+        mock_settings.MEDIA_ROOT = self.media_root
+
+        mock_session = mock_session_cls.return_value
+        
+        mock_search_response = MagicMock()
+        mock_search_response.status_code = 200
+        mock_search_response.json.return_value = {
+            "videos": [
+                {
+                    "video_files": [
+                        {
+                            "file_type": "video/mp4",
+                            "width": 1080,
+                            "height": 1920,
+                            "link": "https://example.com/video.mp4"
+                        }
+                    ]
+                }
+            ]
+        }
+        
+        mock_download_response = MagicMock()
+        mock_download_response.__enter__.return_value.status_code = 200
+        mock_download_response.__enter__.return_value.iter_content.return_value = [b'\x00' * 1024]
+        
+        mock_session.get.side_effect = [mock_search_response, mock_download_response]
+
+        fetch_background_video('stars', project_id=self.project_id, chunk_index=0, layout='vertical')
+
+        called_args = mock_session.get.call_args_list
+        search_url = called_args[0][0][0]
+        self.assertIn('orientation=portrait', search_url)
 
 
 class SubtitleChunkingTestCase(TestCase):

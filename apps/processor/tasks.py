@@ -78,6 +78,7 @@ def process_video_render_task(self, project_id):
     # 3. Generate TTS audio, run Whisper alignment, fetch video clips
     audio_path = None
     video_clips = []
+    layout = project.script_data.get('layout', 'landscape')
 
     try:
         with transaction.atomic():
@@ -115,7 +116,7 @@ def process_video_render_task(self, project_id):
                 )
 
                 video_path, was_cloned = fetch_background_video_with_status(
-                    keyword, project_id=project.human_name, chunk_index=idx
+                    keyword, project_id=project.human_name, chunk_index=idx, layout=layout
                 )
                 # Store clip as a dict with clone provenance for FFmpeg
                 video_clips.append({
@@ -209,6 +210,7 @@ def process_video_render_task(self, project_id):
             video_clips,
             final_output_path,
             subtitle_chunks=subtitle_chunks if subtitle_chunks else None,
+            layout=layout,
         )
 
         MediaAsset.objects.create(

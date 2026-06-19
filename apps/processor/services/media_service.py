@@ -94,7 +94,7 @@ def generate_tts_audio(script_text: str, voice_id: str, project_id: str) -> str:
             logger.error(f"Failed to write fallback silent audio file: {write_err}")
             return url_path
 
-def fetch_background_video(keyword: str, project_id: str, chunk_index: int) -> str:
+def fetch_background_video(keyword: str, project_id: str, chunk_index: int, layout: str = None) -> str:
     """
     Fetches a background video clip matching a keyword from the Pexels Video Search API.
     Saves the video stream to the media/projects/{project_id}/clips/ directory as chunk_{chunk_index}.mp4.
@@ -149,6 +149,10 @@ def fetch_background_video(keyword: str, project_id: str, chunk_index: int) -> s
 
             # ── Step 1: Search Pexels ─────────────────────────────────────────
             params = {"query": keyword, "per_page": 5}
+            if layout == 'landscape':
+                params['orientation'] = 'landscape'
+            elif layout == 'vertical':
+                params['orientation'] = 'portrait'
             search_url = f"https://api.pexels.com/videos/search?{urlencode(params)}"
             logger.info(
                 f"[PexelsFetch] Attempt {attempt}/{MAX_ATTEMPTS}: "
@@ -297,7 +301,7 @@ def fetch_background_video(keyword: str, project_id: str, chunk_index: int) -> s
     return url_path
 
 
-def fetch_background_video_with_status(keyword: str, project_id: str, chunk_index: int) -> tuple:
+def fetch_background_video_with_status(keyword: str, project_id: str, chunk_index: int, layout: str = None) -> tuple:
     """
     Thin wrapper around fetch_background_video() that additionally returns a boolean
     flag indicating whether the returned clip is a clone of the previous chunk.
@@ -321,7 +325,7 @@ def fetch_background_video_with_status(keyword: str, project_id: str, chunk_inde
     if prev_chunk_path and os.path.exists(prev_chunk_path):
         prev_mtime_before = os.path.getmtime(prev_chunk_path)
 
-    url_path = fetch_background_video(keyword, project_id, chunk_index)
+    url_path = fetch_background_video(keyword, project_id, chunk_index, layout=layout)
 
     # Detect clone: if output_path now has the same size as prev_chunk_path,
     # and prev_chunk_path was not touched during the fetch, it was cloned.

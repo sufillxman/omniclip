@@ -39,8 +39,8 @@ def resolve_local_path(path: str) -> str:
 
 # ── ASS Styling Constants ────────────────────────────────────────────────────────
 # All colours are in ASS BGR-hex format (&HBBGGRR&).
-_ASS_FONT_NAME   = "Montserrat"   # Closest open font to the Hormozi style
-_ASS_FONT_SIZE   = 72             # Display pt at 1920×1080; scales auto by FFmpeg for vertical
+_ASS_FONT_NAME   = "Arial Black"  # Universal heavy font for viral style
+_ASS_FONT_SIZE   = 90             # Larger size for high visibility
 _ASS_GLOW_COLOUR = "&H8B00FF&"   # Deep purple chromatic glow (brand accent)
 _ASS_SHADOW_COL  = "&H000000&"   # Pure black hard drop shadow
 _ASS_TEXT_COLOUR = "&H00FFFFFF&" # White primary text
@@ -58,7 +58,7 @@ _ASS_LAYERS = [
 # Vertical alignment: an\8 = top-centre; an\2 = bottom-centre (our target)
 # MarginV pushes the text up from the absolute bottom edge.
 _ASS_ALIGNMENT  = 2     # Bottom-centre
-_ASS_MARGIN_V   = 80    # px from bottom edge (safe zone for social media)
+_ASS_MARGIN_V   = 100    # Adjusted margin to account for larger font size
 
 
 def _ass_ts(seconds: float) -> str:
