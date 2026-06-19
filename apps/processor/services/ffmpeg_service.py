@@ -155,7 +155,6 @@ def _generate_ass_subtitles(subtitle_chunks: list, output_ass_path: str, layout:
             f"{{\\fscx110\\fscy110"
             f"\\t(0,{_BOUNCE_ENTRY_MS},\\fscx100\\fscy100)}}"
         )
-        full_text_bounce = bounce_tag + display_text
 
         # ── Three-layer rendering for this chunk ──────────────────────────────
         for layer, blur, colour, alpha, shad, bord in _ASS_LAYERS:
@@ -164,7 +163,8 @@ def _generate_ass_subtitles(subtitle_chunks: list, output_ass_path: str, layout:
                 f"{{{pos_tag}{blur_tag}\\c{colour}"
                 f"\\alpha&H{alpha}&\\shad{shad}\\bord{bord}}}"
             )
-            layer_text = tag + full_text_bounce
+            # Add transition/animation tag to the start of the formatted string
+            layer_text = bounce_tag + tag + display_text
 
             event_lines.append(
                 f"Dialogue: {layer},{chunk_start_ts},{chunk_end_ts},"
