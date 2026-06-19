@@ -100,7 +100,7 @@ def _generate_ass_subtitles(subtitle_chunks: list, output_ass_path: str, layout:
     """
     res_x, res_y = TARGET_RESOLUTIONS.get(layout, TARGET_RESOLUTIONS['landscape'])
     x_pos, y_pos = (540, 1500) if layout == 'vertical' else (960, 850)
-    pos_tag = f"\\an2\\pos({x_pos},{y_pos})"
+    pos_tag = f"\\an2\\pos({x_pos},{y_pos})\\org({x_pos},{y_pos})"
 
     # ── ASS Script Header ────────────────────────────────────────────────────────
     header = (
@@ -129,7 +129,6 @@ def _generate_ass_subtitles(subtitle_chunks: list, output_ass_path: str, layout:
     )
 
     event_lines: List[str] = []
-    WORD_STAGGER_S = 0.040   # 40ms stagger between each word's entry
 
     for chunk in subtitle_chunks:
         # Support both SubtitleChunk dataclass and plain dict
@@ -145,51 +144,32 @@ def _generate_ass_subtitles(subtitle_chunks: list, output_ass_path: str, layout:
         if not words:
             continue
 
-        chunk_end_ts = _ass_ts(end_time)
-        display_text = " ".join(words)
+        chunk_start_ts = _ass_ts(start_time)
+        chunk_end_ts   = _ass_ts(end_time)
+        display_text   = " ".join(words)
 
-        # ── Kinetic Bounce: emit one Dialogue line per word, staggered ────────────
-        # Each word pops in at 110% scale and settles via \t() transition.
-        # All words in a chunk share the same chunk_end timestamp so they
-        # all disappear simultaneously as a unit.
-        for word_idx, word in enumerate(words):
-            word_entry_time = start_time + (word_idx * WORD_STAGGER_S)
-            word_start_ts   = _ass_ts(word_entry_time)
+        # Build ASS override tags:
+        #   \fscx110\fscy110       = start at 110% scale (overshoot)
+        #   \t(0,{ms},\fscx100...) = transition to 100% in BOUNCE_ENTRY_MS
+        bounce_tag = (
+            f"{{\\fscx110\\fscy110"
+            f"\\t(0,{_BOUNCE_ENTRY_MS},\\fscx100\\fscy100)}}"
+        )
+        full_text_bounce = bounce_tag + display_text
 
-            # Build the per-word display: words before this one are shown as
-            # thin/translucent to give context; only the current word bounces.
-            # This mimics the OpusClip "active word" highlight paradigm.
-            prefix_words = words[:word_idx]   # already visible, no bounce
-            active_word  = word               # currently bouncing into existence
-            suffix_words = words[word_idx+1:] # not yet visible
-
-            # Build ASS override tags:
-            #   \fscx110\fscy110       = start at 110% scale (overshoot)
-            #   \t(0,{ms},\fscx100...) = transition to 100% in BOUNCE_ENTRY_MS
-            bounce_tag = (
-                f"{{\\fscx110\\fscy110"
-                f"\\t(0,{_BOUNCE_ENTRY_MS},\\fscx100\\fscy100)}}"
+        # ── Three-layer rendering for this chunk ──────────────────────────────
+        for layer, blur, colour, alpha, shad, bord in _ASS_LAYERS:
+            blur_tag = f"\\blur{blur}" if blur > 0 else ""
+            tag = (
+                f"{{{pos_tag}{blur_tag}\\c{colour}"
+                f"\\alpha&H{alpha}&\\shad{shad}\\bord{bord}}}"
             )
-            # Prefix words rendered at 70% opacity to fade them back
-            prefix_str = ""
-            if prefix_words:
-                prefix_str = f"{{\\alpha&H48&}}" + " ".join(prefix_words) + f" {{\\alpha&H00&}}"
+            layer_text = tag + full_text_bounce
 
-            full_text_bounce = prefix_str + bounce_tag + active_word
-
-            # ── Three-layer rendering for this word entry ──────────────────────
-            for layer, blur, colour, alpha, shad, bord in _ASS_LAYERS:
-                blur_tag = f"\\blur{blur}" if blur > 0 else ""
-                tag = (
-                    f"{{{pos_tag}{blur_tag}\\c{colour}"
-                    f"\\alpha&H{alpha}&\\shad{shad}\\bord{bord}}}"
-                )
-                layer_text = tag + full_text_bounce
-
-                event_lines.append(
-                    f"Dialogue: {layer},{word_start_ts},{chunk_end_ts},"
-                    f"Default,,0,0,0,,{layer_text}"
-                )
+            event_lines.append(
+                f"Dialogue: {layer},{chunk_start_ts},{chunk_end_ts},"
+                f"Default,,0,0,0,,{layer_text}"
+            )
 
     ass_content = header + "\n".join(event_lines) + "\n"
 
