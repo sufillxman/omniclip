@@ -1,0 +1,81 @@
+# ==========================================
+# Python Bytecode and Cache
+# ==========================================
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# ==========================================
+# Virtual Environments and Packages
+# ==========================================
+.venv/
+venv/
+env/
+ENV/
+.env
+.venv
+env.bak/
+venv.bak/
+pip-log.txt
+pip-delete-this-directory.txt
+
+# ==========================================
+# Database & Secrets
+# ==========================================
+*.sqlite3
+db.sqlite3
+db.sqlite3-journal
+secret_keys.json
+.env.*
+!.env.example
+
+# ==========================================
+# Media, Uploads, and Temp Directories
+# ==========================================
+media/
+!media/fallbacks/
+chunks_temp/
+final_outputs/
+staticfiles/
+static/
+
+# ==========================================
+# Celery
+# ==========================================
+celerybeat-schedule
+celerybeat.pid
+
+# ==========================================
+# Logs & Testing
+# ==========================================
+*.log
+.coverage
+htmlcov/
+.pytest_cache/
+.tox/
+.nox/
+
+# ==========================================
+# Editor & IDE Configs (VSCode, PyCharm, etc.)
+# ==========================================
+.vscode/
+.idea/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+.project
+.pydevproject
+.settings/
+
+# ==========================================
+# OS Files
+# ==========================================
+.DS_Store
+.DS_Store?
+._*
+Thumbs.db
+ehthumbs.db
+Desktop.ini

@@ -1,0 +1,26 @@
+# 04_AUTOMATION_PIPELINE.md (Celery & Redis Data Flow)
+
+## Phase 1: Live SEO & Smart-Prompt
+1. Django calls a lightweight Trends API to fetch viral keywords based on the user's base topic.
+2. [cite_start]Django receives user prompt, injects trending keywords, and hits **Gemini API** (`temperature=0.8` for uniqueness). [cite: 40]
+3. [cite_start]Gemini returns a structured JSON script and visual search keywords. [cite: 41]
+4. [cite_start]Gemini simultaneously generates SEO metadata (YouTube Title, 3 Hashtags, Viral Description) and the initial `json_timeline` data. [cite: 42]
+
+## Phase 2: Media Sourcing (The Celery Worker)
+1. Celery checks `User_API_Keys` to use BYOK keys if valid, otherwise uses internal keys and deducts credits.
+2. [cite_start]**Audio:** Celery sends the script to **ElevenLabs v2 Multilingual API** to get emotional `.mp3` voiceovers. [cite: 43]
+3. [cite_start]**Visuals (Real):** Hits Pexels/Pixabay Video API using keywords to download 4-5 sec `.mp4` clips. [cite: 44]
+4. [cite_start]**Visuals (Anime/3D):** Bypasses Pexels and hits **Fal.ai or Leonardo API** for generated image assets. [cite: 45]
+5. [cite_start]**Visuals (Carousel):** Hits Pexels Image API and uses `Pillow` to burn text onto static images. [cite: 46]
+
+## Phase 3: The Factory Render (FFmpeg)
+1. [cite_start]Celery triggers FFmpeg. [cite: 47]
+2. [cite_start]FFmpeg concatenates visual clips based on the `json_timeline`, syncs the ElevenLabs audio, and layers BGM (dropping BGM volume to 10% automatically via Audio Ducking). [cite: 48]
+3. [cite_start]Adds dynamic word-level subtitles based on user preset (Hormozi, Minimalist). [cite: 49]
+4. **Brand Kit Apply:** FFmpeg applies custom hex colors to fonts and overlays the `watermark_logo_url` at 80% opacity.
+5. [cite_start]Saves final `.mp4` to storage and marks `render_status` as 'Completed' in PostgreSQL. [cite: 50]
+
+## Phase 4: Auto-Posting & Maintenance
+1. [cite_start]At the scheduled time, Celery pushes the video to YouTube/Instagram using the viral SEO metadata. [cite: 51]
+2. [cite_start]**Velocity Guardrail:** Ensures new accounts do not exceed posting limits to avoid shadowbans. [cite: 52]
+3. **Token Health Cron Job:** `Celery beat` runs nightly. [cite_start]If an OAuth token expires in <3 days, it emails the user to reconnect. [cite: 53]

@@ -1,0 +1,26 @@
+# 05_FRONTEND_UI.md (User Journey & React/JS Flow)
+
+## 1. Dashboard, Brand Kits & Settings
+* [cite_start]**Trending Templates:** Dashboard displays 10 pre-filled JSON payloads (e.g., "Horror Story", "Financial Advice"). [cite: 54] [cite_start]Clicking "Remix" instantly bypasses blank-page syndrome and pre-fills the generator. [cite: 55]
+* [cite_start]**Credit Display:** Prominent display of user's remaining credits and account tier. [cite: 56]
+* **Settings & BYOK:** UI to securely input and test personal API keys.
+* **Brand Kit UI:** Color picker for subtitle hex codes, file uploader for custom fonts and watermark logos.
+
+## 2. The Input Flow (Generation)
+* [cite_start]User types a topic and selects configuration: Format (Real B-Roll / Anime / Carousel). [cite: 57]
+* [cite_start]**Language & Voice:** Dropdown for ElevenLabs voices (Includes test 'Play' button). [cite: 58]
+* [cite_start]**Style Elements:** Subtitle preset selector and BGM mood folder. [cite: 59]
+
+## 3. Pre-Render Edit (Cost Saver)
+* [cite_start]System shows the AI-generated script and SEO metadata in a text editor. [cite: 60] [cite_start]User can freely edit the script, fix typos, or change the SEO title. [cite: 61]
+* [cite_start]**Crucial:** User must click a final "Looks Good & Render (Costs 10 Credits)" button to initiate server heavy-lifting. [cite: 62]
+
+## 4. The Waiting State (Polling)
+* [cite_start]While Celery processes FFmpeg, the UI does NOT freeze. [cite: 63] [cite_start]It shows a progress screen by polling the `/api/v1/project/{id}/status/` endpoint every 5 seconds. [cite: 64]
+
+## 5. Post-Render JSON Timeline Editor
+* **The Interface:** A lightweight, Premiere-Pro style horizontal track. Shows video segmented into chunks based on the `json_timeline`.
+* **Functionality:** If a user edits a typo in Scene 2, the UI hits the `PATCH /api/v1/render/chunk/` endpoint. FFmpeg only replaces that specific chunk without a full 60-second re-render.
+
+## 6. Publish & Schedule
+* [cite_start]Once rendered, the UI displays the final video player. [cite: 65] [cite_start]User selects connected social platforms via toggle switches. [cite: 66] Picks a date/time from a calendar UI to schedule the post.

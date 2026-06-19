@@ -1,0 +1,32 @@
+# 03_BACKEND_API.md (Django REST Framework Endpoints)
+
+## 1. BYOK, SEO & Setup Endpoints (Pre-Render)
+* **`POST /api/v1/keys/verify/`**
+  * **Payload:** `{ "service": "ElevenLabs", "api_key": "xyz" }`
+  * **Action:** Verifies the user-provided key. If valid, encrypts with AES-256 and saves to `User_API_Keys`.
+* **`GET /api/v1/trends/`**
+  * **Action:** Fetches live SEO keywords from YouTube/Google Trends to inject into the user's prompt.
+* **`POST /api/v1/generate-script/`**
+  * **Payload:** `{ "prompt": "5 habits of rich people", "tone": "Educational" }`
+  * **Action:** Hits Gemini API (Rate Limited) using internal or BYOK key.
+  * [cite_start]**Returns:** JSON containing the script and visual keywords. [cite: 34]
+* **`PUT /api/v1/edit-script/`**
+  * **Action:** Updates the `script_data` in the Projects table before rendering.
+
+## 2. Rendering & Timeline Editing Endpoints
+* **`POST /api/v1/render/full/`**
+  * **Payload:** `{ "project_id": "uuid", "voice_id": "elevenlabs_xyz", "bgm_preset": "lo-fi" }`
+  * [cite_start]**Action:** Deducts user credits (if not BYOK), triggers Celery background task, and updates `render_status` to 'Processing'. [cite: 35]
+  * [cite_start]**Returns:** `{ "message": "Rendering started", "celery_task_id": "abc-123" }` [cite: 36]
+* **`PATCH /api/v1/render/chunk/`**
+  * **Payload:** `{ "project_id": "uuid", "chunk_index": 2, "new_text": "Fixed typo" }`
+  * **Action:** FFmpeg ONLY re-renders the specific 2-second clip from the `json_timeline` to save massive CPU cost.
+* **`GET /api/v1/project/{id}/status/` (The Polling Endpoint)**
+  * **Action:** Frontend polls this every 5 seconds to check if the video is ready.
+  * [cite_start]**Returns:** `{ "status": "Completed", "video_url": "..." }` [cite: 37]
+
+## 3. Social & Automation Endpoints
+* **`POST /api/v1/social/connect/`**
+  * **Action:** Handles OAuth flow for YouTube/Instagram. [cite_start]Validates if IG account is Professional/Creator before saving encrypted tokens. [cite: 38]
+* **`POST /api/v1/schedule/`**
+  * [cite_start]**Action:** Sets a `Celery eta` task to trigger the API upload at the scheduled time. [cite: 39]

@@ -1,0 +1,18 @@
+# 01_STRICT_RULES.md (System Architecture & Guardrails)
+
+## 1. Concurrency & Resource Management (Server Safety)
+* [cite_start]**Dedicated FFmpeg Worker:** FFmpeg rendering must run on a dedicated Celery worker node to prevent 502 Bad Gateway errors on the main Django web server. [cite: 22]
+* [cite_start]**Strict Concurrency Limits:** Set Celery concurrency (`--concurrency=2` or based on CPU cores) so the server never hits 100% CPU utilization. [cite: 23] [cite_start]Extra render requests must wait in the Redis queue. [cite: 24]
+* **Chunk Rendering Efficiency:** Post-render edits must only trigger localized chunk re-renders via JSON timeline data, strictly avoiding full 0-to-100 re-renders to save massive CPU power.
+
+## 2. API Security & Rate Limiting
+* **Throttling:** Implement `AnonRateThrottle` and `UserRateThrottle` in Django REST Framework to prevent malicious bots from exhausting the Gemini API free quota.
+* [cite_start]**AES-256 Encryption:** All connected social media OAuth tokens (Instagram/YouTube) must be strictly encrypted in the PostgreSQL database using AES-256. [cite: 25] [cite_start]Never store plain-text tokens. [cite: 26] This strict encryption also applies to all User API Keys (BYOK) for Gemini, ElevenLabs, and Pexels.
+
+## 3. Media Sourcing & Fallback Logic
+* **No Real-time Scraping:** Rely purely on official APIs (Pexels, Unsplash, Pixabay). [cite_start]Real-time scraping (e.g., Pinterest) is strictly banned to prevent IP blocking and frozen Celery queues. [cite: 27]
+* [cite_start]**Offline Fallbacks:** If external visual APIs hit rate limits (429 errors), the system must automatically default to a localized server directory (`/media/fallbacks/`) containing 50 pre-downloaded, high-quality media assets. [cite: 28]
+
+## 4. Financial & Trust Guardrails
+* [cite_start]**No Public Unauthenticated URLs:** To prevent massive AWS/Cloud bandwidth bills, do not offer public shareable URLs for rendered videos. [cite: 29] [cite_start]Videos are only for user download or direct auto-posting. [cite: 30]
+* **Auto-Refund Policy:** If a Celery rendering task fails 3 times due to API or FFmpeg errors, the system must automatically abort the task and refund the deducted credits to the user's balance.

@@ -1,0 +1,19 @@
+# 02_DATABASE_SCHEMA.md (PostgreSQL Core Tables)
+
+## Table: Users & Brand_Kits
+* **Users:** `id` (UUID Primary Key), `email` (String Unique), `stripe_customer_id` (String), `account_tier` (Choices: Free, Pro, Agency).
+* **Brand_Kits:** `user_id` (ForeignKey), `primary_hex`, `secondary_hex`, `custom_font_url`, `watermark_logo_url`.
+
+## Table: Economy & BYOK
+* **Credits (The Internal Economy):** `user_id` (ForeignKey), `balance` (Integer), `transaction_history` (JSONB).
+* **User_API_Keys (BYOK):** `user_id` (ForeignKey), `service` (Choices: Gemini, ElevenLabs, Pexels), `encrypted_api_key` (String AES-256), `is_valid` (Boolean).
+
+## Table: Projects & Timelines (The SaaS Core)
+* **Projects:** `id` (UUID Primary Key), `user_id` (ForeignKey), `base_prompt` (Text), `format_type` (Choices: Real-Video, Anime-Video, Carousel), `script_data` (JSONB).
+* **json_timeline:** JSONB (CRITICAL: Stores exact timestamps, text chunks, and media paths for chunk-rendering. e.g., `[{"start": 0, "end": 3.5, "text": "Hook"}]`).
+* **celery_task_id:** String (CRUCIAL: Tracks the background rendering task).
+* **render_status:** Choices (Pending, Processing, Completed, Failed).
+
+## Table: Assets & Automation
+* [cite_start]**Media_Assets:** `id` (UUID), `project_id` (ForeignKey), `media_type` (Choices: Audio, Image, Video_Final)[cite: 31, 32], `file_url` (String AWS S3 or Local Path).
+* **Social_Tokens:** `user_id` (ForeignKey), `platform` (Choices: Instagram, YouTube), `encrypted_access_token` (String AES-256), `encrypted_refresh_token` (String AES-256), `expiry_date` (DateTime).
