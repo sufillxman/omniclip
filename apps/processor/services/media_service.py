@@ -295,3 +295,50 @@ def fetch_background_video(keyword: str, project_id: str, chunk_index: int) -> s
         f"after all download attempts failed. Visual content will repeat for this segment."
     )
     return url_path
+
+
+def fetch_background_video_with_status(keyword: str, project_id: str, chunk_index: int) -> tuple:
+    """
+    Thin wrapper around fetch_background_video() that additionally returns a boolean
+    flag indicating whether the returned clip is a clone of the previous chunk.
+
+    The flag is used by assemble_final_video() to apply -stream_loop -1 on cloned
+    clips, preventing black frames or freeze artifacts when the cloned MP4's native
+    duration is shorter than the Whisper-derived target duration.
+
+    Returns:
+        (url_path: str, was_cloned: bool)
+            url_path   — media-relative URL to the downloaded or cloned MP4
+            was_cloned — True if the file is a copy of chunk_{chunk_index-1}.mp4
+    """
+    clips_dir       = os.path.join(settings.MEDIA_ROOT, 'projects', str(project_id), 'clips')
+    output_path     = os.path.join(clips_dir, f"chunk_{chunk_index}.mp4")
+    prev_chunk_path = os.path.join(clips_dir, f"chunk_{chunk_index - 1}.mp4") if chunk_index > 0 else None
+
+    # Snapshot mtime of previous chunk before calling fetch, so we can detect
+    # whether a clone occurred (the file will be identical bytes to prev_chunk).
+    prev_mtime_before = None
+    if prev_chunk_path and os.path.exists(prev_chunk_path):
+        prev_mtime_before = os.path.getmtime(prev_chunk_path)
+
+    url_path = fetch_background_video(keyword, project_id, chunk_index)
+
+    # Detect clone: if output_path now has the same size as prev_chunk_path,
+    # and prev_chunk_path was not touched during the fetch, it was cloned.
+    was_cloned = False
+    if (
+        chunk_index > 0
+        and prev_chunk_path
+        and os.path.exists(output_path)
+        and os.path.exists(prev_chunk_path)
+        and os.path.getsize(output_path) == os.path.getsize(prev_chunk_path)
+        and os.path.getmtime(prev_chunk_path) == prev_mtime_before
+    ):
+        was_cloned = True
+        logger.info(
+            f"[PexelsFetch] Clone detected for chunk_{chunk_index}: "
+            f"same size as chunk_{chunk_index - 1} ({os.path.getsize(output_path)} bytes). "
+            f"stream_loop will be applied in FFmpeg."
+        )
+
+    return url_path, was_cloned

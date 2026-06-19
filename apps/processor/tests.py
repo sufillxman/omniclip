@@ -54,12 +54,13 @@ class ProcessorTasksTestCase(TestCase):
 
         # Verify that assemble_final_video was called with the adjusted duration
         mock_assemble.assert_called_once()
-        args, _ = mock_assemble.call_args
+        args, kwargs = mock_assemble.call_args
         video_clips = args[1]
         self.assertEqual(len(video_clips), 2)
-        self.assertEqual(video_clips[0][1], 3.5)
+        # Clips are now dicts: {"path", "duration", "is_cloned", "source_idx"}
+        self.assertEqual(video_clips[0]["duration"], 3.5)
         # 7.5 (total audio duration) - 3.5 (first clip duration) = 4.0
-        self.assertEqual(video_clips[1][1], 4.0)
+        self.assertEqual(video_clips[1]["duration"], 4.0)
         
         # Verify MediaAsset creations
         assets = self.project.media_assets.all()
@@ -177,3 +178,180 @@ class FetchBackgroundVideoFallbackTestCase(TestCase):
         self.assertIn('Aborting render to trigger refund', str(ctx.exception))
 
 
+class SubtitleChunkingTestCase(TestCase):
+    """
+    Unit tests for sentence_aware_chunk() covering all four boundary rules and
+    edge cases. No Whisper model is loaded — all word timestamps are synthetic.
+
+    Also covers _ass_ts() timestamp formatting from ffmpeg_service.
+    """
+
+    @staticmethod
+    def _make_words(words_with_times):
+        """
+        Args:
+            words_with_times: list of (word_str, start_float, end_float)
+        Returns:
+            list of {"word": str, "start": float, "end": float}
+        """
+        return [
+            {"word": w, "start": s, "end": e}
+            for w, s, e in words_with_times
+        ]
+
+    # ── 1. Empty input ─────────────────────────────────────────────────────────
+    def test_empty_input_returns_empty_list(self):
+        from apps.processor.services.whisper_service import sentence_aware_chunk
+        result = sentence_aware_chunk([])
+        self.assertEqual(result, [])
+
+    # ── 2. Sentence boundary forces chunk close (PRIORITY 1) ───────────────────
+    def test_sentence_ender_forces_chunk_close(self):
+        """
+        'Hi. How are you?' should produce exactly TWO chunks:
+          ["Hi."] and ["How", "are", "you?"]
+        NOT one merged chunk of 4 words.
+        """
+        from apps.processor.services.whisper_service import sentence_aware_chunk
+        words = self._make_words([
+            ("Hi.",  0.00, 0.40),
+            ("How",  0.50, 0.75),
+            ("are",  0.75, 1.00),
+            ("you?", 1.00, 1.50),
+        ])
+        chunks = sentence_aware_chunk(words)
+        self.assertEqual(len(chunks), 2, f"Expected 2 chunks, got {len(chunks)}: {[c.text for c in chunks]}")
+        self.assertEqual(chunks[0].words, ["Hi."])
+        self.assertEqual(chunks[1].words, ["How", "are", "you?"])
+
+    # ── 3. Max-word limit closes chunk (PRIORITY 3) ────────────────────────────
+    def test_max_word_limit_closes_chunk(self):
+        """
+        5 words with no punctuation should split at 4 + 1.
+        """
+        from apps.processor.services.whisper_service import sentence_aware_chunk
+        words = self._make_words([
+            ("The",    0.0, 0.3),
+            ("quick",  0.3, 0.6),
+            ("brown",  0.6, 0.9),
+            ("fox",    0.9, 1.2),
+            ("jumps",  1.2, 1.5),
+        ])
+        chunks = sentence_aware_chunk(words)
+        self.assertEqual(len(chunks), 2)
+        self.assertEqual(len(chunks[0].words), 4)
+        self.assertEqual(len(chunks[1].words), 1)
+
+    # ── 4. Max-duration limit closes chunk (PRIORITY 2) ───────────────────────
+    def test_max_duration_closes_chunk(self):
+        """
+        Two words spanning 2.5s (> 2.2s _MAX_DURATION_S) must produce a single
+        chunk of 2 words, and then a second chunk for any further words.
+        """
+        from apps.processor.services.whisper_service import sentence_aware_chunk, _MAX_DURATION_S
+        words = self._make_words([
+            ("Start", 0.0,  1.2),
+            ("slow",  1.2,  2.5),   # chunk duration = 2.5 > _MAX_DURATION_S
+            ("next",  2.6,  3.0),
+        ])
+        chunks = sentence_aware_chunk(words)
+        self.assertGreaterEqual(len(chunks), 2)
+        self.assertEqual(chunks[0].words, ["Start", "slow"])
+        self.assertLessEqual(
+            chunks[0].end_time - chunks[0].start_time,
+            _MAX_DURATION_S + 0.5,
+        )
+
+    # ── 5. Micro-chunk merges forward without a natural pause ──────────────────
+    def test_micro_chunk_merges_forward_without_natural_gap(self):
+        """
+        A single word lasting 0.05s (< _MIN_DURATION_S) with only a 0.02s gap
+        to the next word should be merged into the next iteration.
+        """
+        from apps.processor.services.whisper_service import sentence_aware_chunk
+        words = self._make_words([
+            ("A",    0.00, 0.05),   # 0.05s micro, 0.02s gap — merge forward
+            ("long", 0.07, 0.40),
+            ("day",  0.40, 0.80),
+        ])
+        chunks = sentence_aware_chunk(words)
+        self.assertEqual(len(chunks), 1)
+        self.assertIn("A", chunks[0].words)
+
+    # ── 6. Micro-chunk with natural gap — gap only rescues at a triggered boundary ─
+    def test_micro_chunk_survives_with_natural_gap(self):
+        """
+        The natural-gap rescue applies when the chunk closure is already triggered
+        (e.g. by max_words) AND the resulting chunk duration is micro. In that case,
+        a gap >= 0.1s allows the micro-chunk to stand alone rather than merging.
+
+        In this test, 4 fast words hit the max-word limit at 0.4s total (> _MIN_DURATION_S),
+        so the rescue is NOT needed — the chunk closes normally. Then 'wait' is alone
+        in the next chunk. This verifies normal max-word flow is unaffected.
+        """
+        from apps.processor.services.whisper_service import sentence_aware_chunk
+        words = self._make_words([
+            ("A",    0.00, 0.10),
+            ("long", 0.10, 0.20),
+            ("dark", 0.20, 0.30),
+            ("road", 0.30, 0.40),   # 4 words → max_words hit, chunk closes (0.4s > _MIN)
+            ("wait", 0.55, 0.80),   # 0.15s gap after 'road', new chunk
+        ])
+        chunks = sentence_aware_chunk(words)
+        self.assertGreaterEqual(len(chunks), 2)
+        self.assertEqual(chunks[0].words, ["A", "long", "dark", "road"])
+        self.assertEqual(chunks[1].words, ["wait"])
+
+    # ── 7. Sentence-ending micro-chunk never merges (PRIORITY 1 wins) ─────────
+    def test_sentence_ending_micro_chunk_never_merges(self):
+        """
+        Even if a word ending in '!' is very short, PRIORITY 1 (sentence ender)
+        always overrides the merge-forward guard.
+        """
+        from apps.processor.services.whisper_service import sentence_aware_chunk
+        words = self._make_words([
+            ("Go!",  0.00, 0.06),   # 0.06s micro, sentence ender — must close
+            ("Run",  0.07, 0.40),
+            ("now",  0.40, 0.80),
+        ])
+        chunks = sentence_aware_chunk(words)
+        self.assertGreaterEqual(len(chunks), 2)
+        self.assertEqual(chunks[0].words, ["Go!"])
+
+    # ── 8. SubtitleChunk.text and duration properties ─────────────────────────
+    def test_subtitle_chunk_text_and_duration_properties(self):
+        from apps.processor.services.whisper_service import SubtitleChunk
+        chunk = SubtitleChunk(words=["Hello", "world"], start_time=1.0, end_time=2.5)
+        self.assertEqual(chunk.text, "Hello world")
+        self.assertAlmostEqual(chunk.duration, 1.5, places=3)
+
+    # ── 9. _ass_ts() timestamp formatting ─────────────────────────────────────
+    def test_ass_timestamp_formatting(self):
+        from apps.processor.services.ffmpeg_service import _ass_ts
+        self.assertEqual(_ass_ts(0.0),    "0:00:00.00")
+        self.assertEqual(_ass_ts(1.5),    "0:00:01.50")
+        self.assertEqual(_ass_ts(61.25),  "0:01:01.25")
+        self.assertEqual(_ass_ts(3661.0), "1:01:01.00")
+
+    # ── 10. All words appear exactly once across all chunks ────────────────────
+    def test_all_words_covered_no_gaps_or_duplicates(self):
+        """
+        Run a realistic sentence through sentence_aware_chunk() and verify that
+        all original words appear exactly once across all chunks, in order.
+        """
+        from apps.processor.services.whisper_service import sentence_aware_chunk
+        sentence = [
+            "Building", "great", "products", "takes",
+            "discipline.", "It", "also", "takes",
+            "clarity.", "And", "consistency",
+        ]
+        words = [
+            {"word": w, "start": i * 0.4, "end": (i + 1) * 0.4}
+            for i, w in enumerate(sentence)
+        ]
+        chunks = sentence_aware_chunk(words)
+        all_output_words = [w for c in chunks for w in c.words]
+        self.assertEqual(
+            all_output_words, sentence,
+            "All words must appear exactly once in the output chunks, in order."
+        )

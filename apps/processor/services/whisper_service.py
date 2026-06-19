@@ -1,11 +1,142 @@
 import os
+import re
 import logging
+from dataclasses import dataclass, field
+from typing import List
 from django.conf import settings
 
 logger = logging.getLogger(__name__)
 
+# ── Subtitle chunking constants (tunable at the architect level) ───────────────
+# Punctuation characters that FORCE a chunk boundary — a sentence end is sacred.
+_SENTENCE_ENDERS: frozenset = frozenset(".!?;:")
+
+_MAX_WORDS       = 4      # Soft: close the chunk after this many words
+_MAX_DURATION_S  = 2.2   # Hard: close the chunk after this many seconds
+_MIN_DURATION_S  = 0.15  # Floor: chunks shorter than this are merged forward
+
+
+@dataclass
+class SubtitleChunk:
+    """
+    Represents one displayable subtitle unit produced by sentence_aware_chunk().
+
+    Attributes:
+        words:              Raw word strings that form the display text.
+        start_time:         Audio start in seconds (from Whisper word timestamps).
+        end_time:           Audio end in seconds (from Whisper word timestamps).
+        is_cloned:          True when the backing video clip was duplicated from
+                            the previous chunk after a Pexels fetch failure.
+        source_chunk_index: Index of the original clip that was cloned (-1 if not cloned).
+    """
+    words:              List[str]
+    start_time:         float
+    end_time:           float
+    is_cloned:          bool  = False
+    source_chunk_index: int   = -1
+
+    @property
+    def text(self) -> str:
+        """Space-joined display text for ASS rendering."""
+        return " ".join(self.words)
+
+    @property
+    def duration(self) -> float:
+        """Audio duration of this chunk in seconds."""
+        return round(self.end_time - self.start_time, 3)
+
 # Whisper model size: 'base' is the best CPU trade-off (fast, ~74MB, accurate enough for alignment)
 WHISPER_MODEL_SIZE = "base"
+
+
+def sentence_aware_chunk(word_timestamps: list) -> List[SubtitleChunk]:
+    """
+    Deterministic, punctuation-respecting subtitle chunker.
+
+    Converts a flat list of Whisper word-timestamp dicts into SubtitleChunk
+    objects where every chunk boundary respects four priority rules:
+
+        PRIORITY 1: Sentence ender (.!?;:)   → ALWAYS close the chunk
+        PRIORITY 2: Max duration  (2.2s)     → close (prevents long text on-screen)
+        PRIORITY 3: Max words     (4)        → close (visual comfort)
+        PRIORITY 4: Last word               → flush any remaining words
+
+    Micro-chunks (< 150ms with no natural Whisper pause) are merged into the
+    next chunk to prevent imperceptible screen flashes — unless the micro-chunk
+    itself ends a sentence, in which case the boundary is always honoured.
+
+    Args:
+        word_timestamps: List of dicts from WhisperAlignmentService._extract_words():
+                         [{"word": str, "start": float, "end": float}, ...]
+
+    Returns:
+        List[SubtitleChunk] ordered chronologically.
+    """
+    if not word_timestamps:
+        return []
+
+    chunks: List[SubtitleChunk] = []
+    current_words: List[str]    = []
+    current_start: float        = 0.0
+    current_end: float          = 0.0
+    total_tokens                = len(word_timestamps)
+
+    for i, token in enumerate(word_timestamps):
+        word    = token["word"]
+        t_start = float(token["start"])
+        t_end   = float(token["end"])
+
+        # ── Open a new chunk on the first word ───────────────────────────────
+        if not current_words:
+            current_start = t_start
+
+        current_words.append(word)
+        current_end = t_end
+
+        # ── Boundary condition evaluation ─────────────────────────────────────
+        current_duration = current_end - current_start
+        stripped         = word.rstrip()
+        last_char        = stripped[-1] if stripped else ""
+        hits_sentence    = last_char in _SENTENCE_ENDERS
+        hits_word_limit  = len(current_words) >= _MAX_WORDS
+        hits_time_limit  = current_duration >= _MAX_DURATION_S
+        is_last_word     = (i == total_tokens - 1)
+
+        should_close = hits_sentence or hits_word_limit or hits_time_limit or is_last_word
+
+        if not should_close:
+            continue
+
+        # ── Micro-chunk merge-forward guard ───────────────────────────────────
+        # A lone word like "Hi." lasting 0.08s would flash imperceptibly.
+        # Merge it into the next chunk UNLESS:
+        #   a) it ends a sentence (always honour the boundary), OR
+        #   b) there is a natural Whisper silence gap of >= 0.1s after it, OR
+        #   c) it is the very last word (must flush).
+        if not is_last_word and not hits_sentence and current_duration < _MIN_DURATION_S:
+            next_gap = word_timestamps[i + 1]["start"] - t_end
+            if next_gap < 0.1:
+                # Carry these words into the next iteration — do not close yet
+                continue
+
+        chunks.append(
+            SubtitleChunk(
+                words      = current_words[:],
+                start_time = round(current_start, 3),
+                end_time   = round(current_end,   3),
+            )
+        )
+
+        # Reset accumulator
+        current_words = []
+        current_start = 0.0
+        current_end   = 0.0
+
+    logger.debug(
+        f"[sentence_aware_chunk] Produced {len(chunks)} subtitle chunks "
+        f"from {total_tokens} word timestamps."
+    )
+    return chunks
 
 
 class WhisperAlignmentService:
