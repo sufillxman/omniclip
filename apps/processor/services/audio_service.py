@@ -48,6 +48,9 @@ VOICE_MAP = {
     "hindi_female":     ("ThT5KcBeYPX3keUQqHPh", "hi-IN-SwaraNeural"),
     "british_male":     ("VR6AewLTigWG4xSOukaG", "en-GB-RyanNeural"),
     "british_female":   ("AZnzlk1XvdvUeBnXmlld", "en-GB-SoniaNeural"),
+    "hi-IN-MadhurNeural":      ("JBFqnCBsd6RMkjVDRZzb", "hi-IN-MadhurNeural"),
+    "gu-IN-NiranjanNeural":    ("JBFqnCBsd6RMkjVDRZzb", "gu-IN-NiranjanNeural"),
+    "en-US-ChristopherNeural": ("pNInz6obpgDQGcFmaJgB", "en-US-ChristopherNeural"),
 }
 
 # Default fallback when voice_id is unknown
@@ -62,44 +65,17 @@ _DEFAULT_EDGE_VOICE       = "en-US-ChristopherNeural"
 def _normalise_text(text: str) -> str:
     """
     Clean raw script text before sending to any TTS engine.
-    Prevents robotic stuttering on symbols and abbreviations.
-    Punctuation (. , ? !) is intentionally preserved — Azure Neural voices
-    pause naturally at punctuation without any SSML injection.
+    Only strip actual illegal OS characters or control characters (\n, \r, \t)
+    and preserve Devanagari and Gujarati characters in raw UTF-8.
     """
-    # Currency: $10 → ten dollars,  $1.5M → 1.5 million dollars
-    text = re.sub(r'\$(\d+(?:\.\d+)?)[Mm]', r'\1 million dollars', text)
-    text = re.sub(r'\$(\d+(?:\.\d+)?)[Kk]', r'\1 thousand dollars', text)
-    text = re.sub(r'\$(\d+(?:\.\d+)?)', r'\1 dollars', text)
-
-    # Percentages: 95% → 95 percent
-    text = re.sub(r'(\d+(?:\.\d+)?)\s*%', r'\1 percent', text)
-
-    # Common abbreviations that TTS spells letter-by-letter awkwardly
-    abbreviations = {
-        r'\bAI\b':    'A I',
-        r'\bAPI\b':   'A P I',
-        r'\bUI\b':    'U I',
-        r'\bUX\b':    'U X',
-        r'\bSaaS\b':  'Software as a Service',
-        r'\bBYOK\b':  'Bring Your Own Key',
-        r'\bURL\b':   'U R L',
-        r'\bHTTP\b':  'H T T P',
-        r'\bHTTPS\b': 'H T T P S',
-    }
-    for pattern, replacement in abbreviations.items():
-        text = re.sub(pattern, replacement, text)
-
-    # Bullet / list symbols
-    text = re.sub(r'[\u2022\u25cf\u25e6\u25aa\u25b8\u25ba]', '', text)
-
-    # Strip only standalone markdown bold/italic/code markers (*  ** ` ```)
-    # — does NOT strip underscores inside compound words like game_changing
-    text = re.sub(r'(?<![\w])([*`#])(?![\w])', '', text)
-    text = re.sub(r'\*{1,3}', '', text)  # leftover ** bold markers
-
+    # Replace control characters (\n, \r, \t) with spaces
+    text = text.replace('\n', ' ').replace('\r', ' ').replace('\t', ' ')
+    
+    # Strip illegal OS filename/control characters (e.g. \x00-\x1f) if any, but preserve UTF-8 Devanagari and Gujarati characters
+    text = re.sub(r'[\x00-\x1f\x7f-\x9f]', '', text)
+    
     # Collapse multiple whitespace
     text = re.sub(r'\s{2,}', ' ', text).strip()
-
     return text
 
 

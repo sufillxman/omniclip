@@ -499,3 +499,74 @@ class SubtitleChunkingTestCase(TestCase):
             all_output_words, sentence,
             "All words must appear exactly once in the output chunks, in order."
         )
+
+
+class MultilingualAndLimitsTestCase(TestCase):
+    def test_multilingual_text_normalisation(self):
+        """Verify that _normalise_text preserves English, Hindi (Devanagari), and Gujarati characters."""
+        from apps.processor.services.audio_service import _normalise_text
+        text = "नमस्ते Hello ગુજરાત \n\t\r"
+        res = _normalise_text(text)
+        self.assertIn("नमस्ते", res)
+        self.assertIn("Hello", res)
+        self.assertIn("ગુજરાત", res)
+        self.assertNotIn("\n", res)
+        self.assertNotIn("\r", res)
+        self.assertNotIn("\t", res)
+
+    def test_multilingual_sentence_enders(self):
+        """Verify that Devanagari/Gujarati Purna Viram characters act as sentence enders and close chunks."""
+        from apps.processor.services.whisper_service import sentence_aware_chunk
+        words = [
+            {"word": "नमस्ते।", "start": 0.0, "end": 0.5},
+            {"word": "ગુજરાત॥", "start": 0.6, "end": 1.1},
+            {"word": "English.", "start": 1.2, "end": 1.8},
+        ]
+        chunks = sentence_aware_chunk(words)
+        self.assertEqual(len(chunks), 3)
+        self.assertEqual(chunks[0].words, ["नमस्ते।"])
+        self.assertEqual(chunks[1].words, ["ગુજરાત॥"])
+        self.assertEqual(chunks[2].words, ["English."])
+
+    def test_strict_anti_freeze_hard_caps_words(self):
+        """Verify that reaching _MAX_WORDS (4) force-closes the chunk, bypassing micro-chunk merge guard."""
+        from apps.processor.services.whisper_service import sentence_aware_chunk
+        # All words happen extremely fast (each 0.02s, total 0.08s < _MIN_DURATION_S)
+        # Without bypass, the merge guard would merge them forward.
+        # With bypass, it force-closes at exactly 4 words.
+        words = [
+            {"word": "one", "start": 0.0, "end": 0.02},
+            {"word": "two", "start": 0.02, "end": 0.04},
+            {"word": "three", "start": 0.04, "end": 0.06},
+            {"word": "four", "start": 0.06, "end": 0.08},
+            {"word": "five", "start": 0.08, "end": 0.10},
+        ]
+        chunks = sentence_aware_chunk(words)
+        self.assertGreaterEqual(len(chunks), 2)
+        self.assertEqual(chunks[0].words, ["one", "two", "three", "four"])
+        self.assertEqual(chunks[1].words, ["five"])
+
+    def test_strict_anti_freeze_hard_caps_duration(self):
+        """Verify that reaching _MAX_DURATION_S (2.0s) force-closes the chunk, bypassing micro-chunk merge guard."""
+        from apps.processor.services.whisper_service import sentence_aware_chunk
+        # One long word of 2.1s (>= 2.0s _MAX_DURATION_S)
+        words = [
+            {"word": "longword", "start": 0.0, "end": 2.1},
+            {"word": "next", "start": 2.2, "end": 2.3},
+        ]
+        chunks = sentence_aware_chunk(words)
+        self.assertGreaterEqual(len(chunks), 2)
+        self.assertEqual(chunks[0].words, ["longword"])
+        self.assertEqual(chunks[1].words, ["next"])
+
+    def test_voice_id_fallbacks_mapping(self):
+        """Verify that VOICE_MAP resolves the requested voices correctly."""
+        from apps.processor.services.audio_service import VOICE_MAP
+        self.assertIn("hi-IN-MadhurNeural", VOICE_MAP)
+        self.assertEqual(VOICE_MAP["hi-IN-MadhurNeural"][1], "hi-IN-MadhurNeural")
+        
+        self.assertIn("gu-IN-NiranjanNeural", VOICE_MAP)
+        self.assertEqual(VOICE_MAP["gu-IN-NiranjanNeural"][1], "gu-IN-NiranjanNeural")
+        
+        self.assertIn("en-US-ChristopherNeural", VOICE_MAP)
+        self.assertEqual(VOICE_MAP["en-US-ChristopherNeural"][1], "en-US-ChristopherNeural")

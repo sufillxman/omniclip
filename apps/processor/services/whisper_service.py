@@ -9,10 +9,10 @@ logger = logging.getLogger(__name__)
 
 # ── Subtitle chunking constants (tunable at the architect level) ───────────────
 # Punctuation characters that FORCE a chunk boundary — a sentence end is sacred.
-_SENTENCE_ENDERS: frozenset = frozenset(".!?;:")
+_SENTENCE_ENDERS: frozenset = frozenset(".!?;:।॥")
 
 _MAX_WORDS       = 4      # Soft: close the chunk after this many words
-_MAX_DURATION_S  = 2.2   # Hard: close the chunk after this many seconds
+_MAX_DURATION_S  = 2.0   # Hard: close the chunk after this many seconds
 _MIN_DURATION_S  = 0.15  # Floor: chunks shorter than this are merged forward
 
 
@@ -111,9 +111,10 @@ def sentence_aware_chunk(word_timestamps: list) -> List[SubtitleChunk]:
         # A lone word like "Hi." lasting 0.08s would flash imperceptibly.
         # Merge it into the next chunk UNLESS:
         #   a) it ends a sentence (always honour the boundary), OR
-        #   b) there is a natural Whisper silence gap of >= 0.1s after it, OR
-        #   c) it is the very last word (must flush).
-        if not is_last_word and not hits_sentence and current_duration < _MIN_DURATION_S:
+        #   b) it hits the strict word limit or time limit (always force close), OR
+        #   c) there is a natural Whisper silence gap of >= 0.1s after it, OR
+        #   d) it is the very last word (must flush).
+        if not is_last_word and not hits_sentence and not hits_word_limit and not hits_time_limit and current_duration < _MIN_DURATION_S:
             next_gap = word_timestamps[i + 1]["start"] - t_end
             if next_gap < 0.1:
                 # Carry these words into the next iteration — do not close yet
@@ -214,7 +215,7 @@ class WhisperAlignmentService:
         import re
 
         def tokenize(text: str) -> list:
-            return re.findall(r"[a-z0-9']+", text.lower())
+            return re.findall(r"[\w']+", text.lower())
 
         enriched = []
         word_cursor = 0
