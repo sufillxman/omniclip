@@ -12,7 +12,7 @@ logger = logging.getLogger(__name__)
 class TimelineSegment(BaseModel):
     chunk_index: int = Field(..., description="Sequential index of the segment starting at 0")
     text: str = Field(..., description="The exact words spoken in this segment (7 to 9 words)")
-    visual_keyword: str = Field(..., description="A unique, context-specific keyword for video search")
+    visual_keyword: str = Field(..., description="A unique, context-specific keyword for video search. You MUST provide only 1 or 2 simple words for the visual keyword (e.g., \"robot\", \"city\", \"technology\"). DO NOT write long sentences or descriptive phrases, as this breaks the Pexels API search.")
 
 class VideoScript(BaseModel):
     title: str = Field(..., description="Catchy title of the video")
@@ -63,7 +63,7 @@ class GeminiService:
             "     {\n"
             "       \"chunk_index\": 0,\n"
             "       \"text\": \"The exact words spoken in this segment (7 to 9 words).\",\n"
-            "       \"visual_keyword\": \"A unique, highly context-specific search keyword for this exact clip.\"\n"
+            "       \"visual_keyword\": \"You MUST provide only 1 or 2 simple words for the visual keyword (e.g., \\\"robot\\\", \\\"city\\\", \\\"technology\\\"). DO NOT write long sentences or descriptive phrases, as this breaks the Pexels API search.\"\n"
             "     }\n"
             "  ]\n"
             "}\n"
@@ -71,9 +71,7 @@ class GeminiService:
             "1. Split voiceover_script into sequential segments of 7 to 9 words each. "
             "   The 'text' field of each segment must be the exact words from that portion of voiceover_script.\n"
             "2. Every visual_keyword must be 100% unique across all segments — no keyword may be "
-            "   reused or duplicated. Each keyword must be specific to the content of that exact "
-            "   text segment (e.g., 'astronaut floating in space', 'stock market chart rising', "
-            "   'scientist in laboratory').\n"
+            "   reused or duplicated. You MUST provide only 1 or 2 simple words for the visual keyword (e.g., \"robot\", \"city\", \"technology\"). DO NOT write long sentences or descriptive phrases, as this breaks the Pexels API search.\n"
             "3. Generate exactly enough segments to cover the full voiceover_script with no shortages.\n"
             "4. Do NOT include start_time or end_time fields — timestamps are computed from real audio.\n"
             "5. Do not return markdown syntax, wrapping blocks, or backticks like ```json.\n"

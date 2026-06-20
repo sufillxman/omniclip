@@ -11,9 +11,9 @@ logger = logging.getLogger(__name__)
 # Punctuation characters that FORCE a chunk boundary — a sentence end is sacred.
 _SENTENCE_ENDERS: frozenset = frozenset(".!?;:।॥")
 
-_MAX_WORDS       = 4      # Soft: close the chunk after this many words
-_MAX_DURATION_S  = 2.0   # Hard: close the chunk after this many seconds
-_MIN_DURATION_S  = 0.15  # Floor: chunks shorter than this are merged forward
+_MAX_WORDS       = 7      # Soft: close the chunk after this many words
+_MAX_DURATION_S  = 2.5   # Hard: close the chunk after this many seconds
+_MIN_DURATION_S  = 0.4  # Floor: chunks shorter than this are merged forward
 
 
 @dataclass

@@ -371,32 +371,35 @@ class SubtitleChunkingTestCase(TestCase):
     # ── 3. Max-word limit closes chunk (PRIORITY 3) ────────────────────────────
     def test_max_word_limit_closes_chunk(self):
         """
-        5 words with no punctuation should split at 4 + 1.
+        8 words with no punctuation should split at 7 + 1.
         """
         from apps.processor.services.whisper_service import sentence_aware_chunk
         words = self._make_words([
-            ("The",    0.0, 0.3),
-            ("quick",  0.3, 0.6),
-            ("brown",  0.6, 0.9),
-            ("fox",    0.9, 1.2),
-            ("jumps",  1.2, 1.5),
+            ("One",    0.0, 0.3),
+            ("two",    0.3, 0.6),
+            ("three",  0.6, 0.9),
+            ("four",   0.9, 1.2),
+            ("five",   1.2, 1.5),
+            ("six",    1.5, 1.8),
+            ("seven",  1.8, 2.1),
+            ("eight",  2.1, 2.4),
         ])
         chunks = sentence_aware_chunk(words)
         self.assertEqual(len(chunks), 2)
-        self.assertEqual(len(chunks[0].words), 4)
+        self.assertEqual(len(chunks[0].words), 7)
         self.assertEqual(len(chunks[1].words), 1)
 
     # ── 4. Max-duration limit closes chunk (PRIORITY 2) ───────────────────────
     def test_max_duration_closes_chunk(self):
         """
-        Two words spanning 2.5s (> 2.2s _MAX_DURATION_S) must produce a single
+        Two words spanning 2.6s (>= 2.5s _MAX_DURATION_S) must produce a single
         chunk of 2 words, and then a second chunk for any further words.
         """
         from apps.processor.services.whisper_service import sentence_aware_chunk, _MAX_DURATION_S
         words = self._make_words([
             ("Start", 0.0,  1.2),
-            ("slow",  1.2,  2.5),   # chunk duration = 2.5 > _MAX_DURATION_S
-            ("next",  2.6,  3.0),
+            ("slow",  1.2,  2.6),   # chunk duration = 2.6 >= _MAX_DURATION_S
+            ("next",  2.7,  3.0),
         ])
         chunks = sentence_aware_chunk(words)
         self.assertGreaterEqual(len(chunks), 2)
@@ -429,21 +432,24 @@ class SubtitleChunkingTestCase(TestCase):
         (e.g. by max_words) AND the resulting chunk duration is micro. In that case,
         a gap >= 0.1s allows the micro-chunk to stand alone rather than merging.
 
-        In this test, 4 fast words hit the max-word limit at 0.4s total (> _MIN_DURATION_S),
+        In this test, 7 fast words hit the max-word limit at 0.7s total (> _MIN_DURATION_S),
         so the rescue is NOT needed — the chunk closes normally. Then 'wait' is alone
         in the next chunk. This verifies normal max-word flow is unaffected.
         """
         from apps.processor.services.whisper_service import sentence_aware_chunk
         words = self._make_words([
-            ("A",    0.00, 0.10),
-            ("long", 0.10, 0.20),
-            ("dark", 0.20, 0.30),
-            ("road", 0.30, 0.40),   # 4 words → max_words hit, chunk closes (0.4s > _MIN)
-            ("wait", 0.55, 0.80),   # 0.15s gap after 'road', new chunk
+            ("one",  0.00, 0.10),
+            ("two",  0.10, 0.20),
+            ("three",0.20, 0.30),
+            ("four", 0.30, 0.40),
+            ("five", 0.40, 0.50),
+            ("six",  0.50, 0.60),
+            ("seven",0.60, 0.70),   # 7 words → max_words hit, chunk closes (0.7s > _MIN)
+            ("wait", 0.85, 1.10),   # 0.15s gap after 'seven', new chunk
         ])
         chunks = sentence_aware_chunk(words)
         self.assertGreaterEqual(len(chunks), 2)
-        self.assertEqual(chunks[0].words, ["A", "long", "dark", "road"])
+        self.assertEqual(chunks[0].words, ["one", "two", "three", "four", "five", "six", "seven"])
         self.assertEqual(chunks[1].words, ["wait"])
 
     # ── 7. Sentence-ending micro-chunk never merges (PRIORITY 1 wins) ─────────
@@ -529,30 +535,33 @@ class MultilingualAndLimitsTestCase(TestCase):
         self.assertEqual(chunks[2].words, ["English."])
 
     def test_strict_anti_freeze_hard_caps_words(self):
-        """Verify that reaching _MAX_WORDS (4) force-closes the chunk, bypassing micro-chunk merge guard."""
+        """Verify that reaching _MAX_WORDS (7) force-closes the chunk, bypassing micro-chunk merge guard."""
         from apps.processor.services.whisper_service import sentence_aware_chunk
-        # All words happen extremely fast (each 0.02s, total 0.08s < _MIN_DURATION_S)
+        # All words happen extremely fast (each 0.02s, total 0.14s < _MIN_DURATION_S)
         # Without bypass, the merge guard would merge them forward.
-        # With bypass, it force-closes at exactly 4 words.
+        # With bypass, it force-closes at exactly 7 words.
         words = [
             {"word": "one", "start": 0.0, "end": 0.02},
             {"word": "two", "start": 0.02, "end": 0.04},
             {"word": "three", "start": 0.04, "end": 0.06},
             {"word": "four", "start": 0.06, "end": 0.08},
             {"word": "five", "start": 0.08, "end": 0.10},
+            {"word": "six", "start": 0.10, "end": 0.12},
+            {"word": "seven", "start": 0.12, "end": 0.14},
+            {"word": "eight", "start": 0.14, "end": 0.16},
         ]
         chunks = sentence_aware_chunk(words)
         self.assertGreaterEqual(len(chunks), 2)
-        self.assertEqual(chunks[0].words, ["one", "two", "three", "four"])
-        self.assertEqual(chunks[1].words, ["five"])
+        self.assertEqual(chunks[0].words, ["one", "two", "three", "four", "five", "six", "seven"])
+        self.assertEqual(chunks[1].words, ["eight"])
 
     def test_strict_anti_freeze_hard_caps_duration(self):
-        """Verify that reaching _MAX_DURATION_S (2.0s) force-closes the chunk, bypassing micro-chunk merge guard."""
+        """Verify that reaching _MAX_DURATION_S (2.5s) force-closes the chunk, bypassing micro-chunk merge guard."""
         from apps.processor.services.whisper_service import sentence_aware_chunk
-        # One long word of 2.1s (>= 2.0s _MAX_DURATION_S)
+        # One long word of 2.6s (>= 2.5s _MAX_DURATION_S)
         words = [
-            {"word": "longword", "start": 0.0, "end": 2.1},
-            {"word": "next", "start": 2.2, "end": 2.3},
+            {"word": "longword", "start": 0.0, "end": 2.6},
+            {"word": "next", "start": 2.7, "end": 2.8},
         ]
         chunks = sentence_aware_chunk(words)
         self.assertGreaterEqual(len(chunks), 2)
