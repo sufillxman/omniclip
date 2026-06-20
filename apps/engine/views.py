@@ -132,11 +132,13 @@ class FullRenderAPIView(APIView):
 
                 # Deduct credits atomically
                 credits_obj.balance -= render_cost
-                credits_obj.transaction_history.append({
+                current_history = credits_obj.transaction_history if credits_obj.transaction_history else []
+                current_history.append({
                     "type": "deduction",
                     "amount": render_cost,
                     "project_id": str(project.id)
                 })
+                credits_obj.transaction_history = current_history
                 credits_obj.save()
 
                 # Mark project as PROCESSING to hold lock state
