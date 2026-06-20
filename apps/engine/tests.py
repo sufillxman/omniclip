@@ -293,6 +293,21 @@ class EngineViewsTestCase(APITestCase):
         # Assert directory is removed
         self.assertFalse(os.path.exists(project_dir))
 
+    def test_full_render_injects_voice_and_bgm(self):
+        """Verify that FullRenderAPIView injects voice_id and bgm_preset into script_data."""
+        self.client.force_authenticate(user=self.user1)
+        post_data = {
+            'project_id': str(self.project1.id),
+            'voice_id': 'custom_voice',
+            'bgm_preset': 'lofi'
+        }
+        response = self.client.post(reverse('render-full'), post_data)
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        
+        self.project1.refresh_from_db()
+        self.assertEqual(self.project1.script_data.get('voice_id'), 'custom_voice')
+        self.assertEqual(self.project1.script_data.get('bgm_preset'), 'lofi')
+
 
 from unittest.mock import MagicMock
 from apps.engine.services.gemini_service import GeminiService

@@ -141,6 +141,12 @@ class FullRenderAPIView(APIView):
                 credits_obj.transaction_history = current_history
                 credits_obj.save()
 
+                script_data = project.script_data if project.script_data is not None else {}
+                script_data = dict(script_data)
+                if voice_id: script_data['voice_id'] = voice_id
+                if bgm_preset: script_data['bgm_preset'] = bgm_preset
+                project.script_data = script_data
+
                 # Mark project as PROCESSING to hold lock state
                 project.render_status = Project.RenderStatus.PROCESSING
                 project.save()

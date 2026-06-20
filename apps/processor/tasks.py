@@ -90,7 +90,8 @@ def process_video_render_task(self, project_id):
         # ── Step A: Generate TTS voiceover ───────────────────────────────
         voiceover_script = project.script_data.get('voiceover_script', '')
         if voiceover_script:
-            audio_path = generate_tts_audio(voiceover_script, voice_id="standard_male", project_id=project.human_name)
+            voice_id = project.script_data.get('voice_id', 'standard_male')
+            audio_path = generate_tts_audio(voiceover_script, voice_id=voice_id, project_id=project.human_name)
             with transaction.atomic():
                 MediaAsset.objects.create(
                     project=project,

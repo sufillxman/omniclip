@@ -99,6 +99,51 @@ class ProcessorTasksTestCase(TestCase):
         credits_obj.refresh_from_db()
         self.assertEqual(credits_obj.balance, 60)
 
+    @patch('apps.processor.tasks.generate_tts_audio')
+    @patch('apps.processor.tasks.assemble_final_video')
+    @patch('ffmpeg.probe')
+    def test_process_video_render_task_dynamic_voice(self, mock_probe, mock_assemble, mock_generate_tts):
+        """Verify process_video_render_task fetches dynamic voice_id and passes it to generate_tts_audio."""
+        mock_probe.return_value = {'format': {'duration': '7.5'}}
+        mock_generate_tts.return_value = f"/media/projects/{self.project.human_name}/audio/voiceover.wav"
+        
+        # Set dynamic voice_id on project script_data
+        self.project.script_data['voice_id'] = 'custom_test_voice'
+        self.project.save()
+        
+        result = process_video_render_task.apply(args=[self.project.id])
+        self.assertEqual(result.status, 'SUCCESS')
+        
+        # Assert generate_tts_audio was called with custom_test_voice
+        mock_generate_tts.assert_called_once_with(
+            "Space is the ultimate frontier.",
+            voice_id="custom_test_voice",
+            project_id=self.project.human_name
+        )
+
+    @patch('apps.processor.tasks.generate_tts_audio')
+    @patch('apps.processor.tasks.assemble_final_video')
+    @patch('ffmpeg.probe')
+    def test_process_video_render_task_default_voice_fallback(self, mock_probe, mock_assemble, mock_generate_tts):
+        """Verify process_video_render_task falls back to 'standard_male' if voice_id is missing."""
+        mock_probe.return_value = {'format': {'duration': '7.5'}}
+        mock_generate_tts.return_value = f"/media/projects/{self.project.human_name}/audio/voiceover.wav"
+        
+        # Ensure voice_id is NOT in script_data
+        if 'voice_id' in self.project.script_data:
+            del self.project.script_data['voice_id']
+        self.project.save()
+        
+        result = process_video_render_task.apply(args=[self.project.id])
+        self.assertEqual(result.status, 'SUCCESS')
+        
+        # Assert generate_tts_audio was called with standard_male
+        mock_generate_tts.assert_called_once_with(
+            "Space is the ultimate frontier.",
+            voice_id="standard_male",
+            project_id=self.project.human_name
+        )
+
 
 class FetchBackgroundVideoFallbackTestCase(TestCase):
     """
