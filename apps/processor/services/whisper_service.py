@@ -2,18 +2,14 @@ import os
 import re
 import logging
 from dataclasses import dataclass, field
-from typing import List
+from typing import List, Optional
 from django.conf import settings
+from apps.processor.services.language_profiles import ProfileManager, EnglishProfile, LanguageProfile
 
 logger = logging.getLogger(__name__)
 
-# ── Subtitle chunking constants (tunable at the architect level) ───────────────
 # Punctuation characters that FORCE a chunk boundary — a sentence end is sacred.
-_SENTENCE_ENDERS: frozenset = frozenset(".!?;:।॥")
-
-_MAX_WORDS       = 7      # Soft: close the chunk after this many words
-_MAX_DURATION_S  = 2.5   # Hard: close the chunk after this many seconds
-_MIN_DURATION_S  = 0.4  # Floor: chunks shorter than this are merged forward
+_SENTENCE_ENDERS: frozenset = frozenset(".!?;:।॥|")
 
 
 @dataclass
@@ -49,31 +45,41 @@ class SubtitleChunk:
 WHISPER_MODEL_SIZE = "base"
 
 
-def sentence_aware_chunk(word_timestamps: list) -> List[SubtitleChunk]:
+def sentence_aware_chunk(word_timestamps: list, profile: Optional['LanguageProfile'] = None) -> List[SubtitleChunk]:
     """
     Deterministic, punctuation-respecting subtitle chunker.
 
     Converts a flat list of Whisper word-timestamp dicts into SubtitleChunk
     objects where every chunk boundary respects four priority rules:
 
-        PRIORITY 1: Sentence ender (.!?;:)   → ALWAYS close the chunk
-        PRIORITY 2: Max duration  (2.2s)     → close (prevents long text on-screen)
-        PRIORITY 3: Max words     (4)        → close (visual comfort)
+        PRIORITY 1: Sentence ender (.!?;:।॥|) → ALWAYS close the chunk
+        PRIORITY 2: Max duration  (profile-driven) → close (prevents long text on-screen)
+        PRIORITY 3: Max words     (profile-driven) → close (visual comfort)
         PRIORITY 4: Last word               → flush any remaining words
 
-    Micro-chunks (< 150ms with no natural Whisper pause) are merged into the
-    next chunk to prevent imperceptible screen flashes — unless the micro-chunk
-    itself ends a sentence, in which case the boundary is always honoured.
+    Micro-chunks below profile.whisper_min_duration with no natural Whisper pause
+    are merged into the next chunk to prevent imperceptible screen flashes — unless
+    the micro-chunk itself ends a sentence, in which case the boundary is always honoured.
 
     Args:
         word_timestamps: List of dicts from WhisperAlignmentService._extract_words():
                          [{"word": str, "start": float, "end": float}, ...]
+        profile:        LanguageProfile driving chunking constants. Auto-detected
+                         from text if not provided.
 
     Returns:
         List[SubtitleChunk] ordered chronologically.
     """
     if not word_timestamps:
         return []
+
+    if profile is None:
+        sample = " ".join(w["word"] for w in word_timestamps[:10])
+        profile = ProfileManager.detect(sample)
+
+    max_words = profile.whisper_max_words
+    max_duration = profile.whisper_max_duration
+    min_duration = profile.whisper_min_duration
 
     chunks: List[SubtitleChunk] = []
     current_words: List[str]    = []
@@ -86,20 +92,18 @@ def sentence_aware_chunk(word_timestamps: list) -> List[SubtitleChunk]:
         t_start = float(token["start"])
         t_end   = float(token["end"])
 
-        # ── Open a new chunk on the first word ───────────────────────────────
         if not current_words:
             current_start = t_start
 
         current_words.append(word)
         current_end = t_end
 
-        # ── Boundary condition evaluation ─────────────────────────────────────
         current_duration = current_end - current_start
         stripped         = word.rstrip()
         last_char        = stripped[-1] if stripped else ""
         hits_sentence    = last_char in _SENTENCE_ENDERS
-        hits_word_limit  = len(current_words) >= _MAX_WORDS
-        hits_time_limit  = current_duration >= _MAX_DURATION_S
+        hits_word_limit  = len(current_words) >= max_words
+        hits_time_limit  = current_duration >= max_duration
         is_last_word     = (i == total_tokens - 1)
 
         should_close = hits_sentence or hits_word_limit or hits_time_limit or is_last_word
@@ -107,17 +111,9 @@ def sentence_aware_chunk(word_timestamps: list) -> List[SubtitleChunk]:
         if not should_close:
             continue
 
-        # ── Micro-chunk merge-forward guard ───────────────────────────────────
-        # A lone word like "Hi." lasting 0.08s would flash imperceptibly.
-        # Merge it into the next chunk UNLESS:
-        #   a) it ends a sentence (always honour the boundary), OR
-        #   b) it hits the strict word limit or time limit (always force close), OR
-        #   c) there is a natural Whisper silence gap of >= 0.1s after it, OR
-        #   d) it is the very last word (must flush).
-        if not is_last_word and not hits_sentence and not hits_word_limit and not hits_time_limit and current_duration < _MIN_DURATION_S:
+        if not is_last_word and not hits_sentence and not hits_word_limit and not hits_time_limit and current_duration < min_duration:
             next_gap = word_timestamps[i + 1]["start"] - t_end
             if next_gap < 0.1:
-                # Carry these words into the next iteration — do not close yet
                 continue
 
         chunks.append(
@@ -128,7 +124,6 @@ def sentence_aware_chunk(word_timestamps: list) -> List[SubtitleChunk]:
             )
         )
 
-        # Reset accumulator
         current_words = []
         current_start = 0.0
         current_end   = 0.0
@@ -197,18 +192,14 @@ class WhisperAlignmentService:
         Flatten faster-whisper segment/word objects into a simple list of dicts:
         [{"word": str, "start": float, "end": float}, ...]
         """
-        def _is_indic(word: str) -> bool:
-            return any(
-                0x0900 <= ord(c) <= 0x097F or 0x0A80 <= ord(c) <= 0x0AFF
-                for c in word
-            )
-
         words = []
         for seg in segments:
             if hasattr(seg, 'words') and seg.words:
                 for w in seg.words:
                     raw_word = w.word.strip()
-                    processed_word = raw_word if _is_indic(raw_word) else raw_word.lower()
+                    profile = ProfileManager.detect(raw_word)
+                    is_indic = not isinstance(profile, EnglishProfile)
+                    processed_word = raw_word if is_indic else raw_word.lower()
                     words.append({
                         "word":  processed_word,
                         "start": w.start,

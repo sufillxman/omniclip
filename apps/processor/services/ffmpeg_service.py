@@ -7,6 +7,7 @@ import tempfile
 from typing import List, Optional
 import ffmpeg
 from django.conf import settings
+from apps.processor.services.language_profiles import ProfileManager
 
 logger = logging.getLogger(__name__)
 
@@ -37,10 +38,8 @@ def resolve_local_path(path: str) -> str:
 # ASS Subtitle Generation
 # ══════════════════════════════════════════════════════════════════════════════
 
-# ── ASS Styling Constants ────────────────────────────────────────────────────────
+# ── ASS Styling Constants (rendering, not language-specific) ─────────────────────
 # All colours are in ASS BGR-hex format (&HBBGGRR&).
-_ASS_FONT_NAME   = "Arial Black"  # Universal heavy font for viral style
-_ASS_FONT_SIZE   = 90             # Larger size for high visibility
 _ASS_GLOW_COLOUR = "&H8B00FF&"   # Deep purple chromatic glow (brand accent)
 _ASS_SHADOW_COL  = "&H000000&"   # Pure black hard drop shadow
 _ASS_TEXT_COLOUR = "&H00FFFFFF&" # White primary text
@@ -56,9 +55,7 @@ _ASS_LAYERS = [
 ]
 
 # Vertical alignment: an\8 = top-centre; an\2 = bottom-centre (our target)
-# MarginV pushes the text up from the absolute bottom edge.
 _ASS_ALIGNMENT  = 2     # Bottom-centre
-_ASS_MARGIN_V   = 100    # Adjusted margin to account for larger font size
 
 
 def _ass_ts(seconds: float) -> str:
@@ -71,15 +68,6 @@ def _ass_ts(seconds: float) -> str:
     s  = int(seconds % 60)
     cs = int(round((seconds - math.floor(seconds)) * 100))  # centiseconds
     return f"{h}:{m:02d}:{s:02d}.{cs:02d}"
-
-
-def _contains_indic_script(text: str) -> bool:
-    """Detect Devanagari or Gujarati Unicode characters."""
-    return any(
-        0x0900 <= ord(c) <= 0x097F  # Devanagari block
-        or 0x0A80 <= ord(c) <= 0x0AFF  # Gujarati block
-        for c in text
-    )
 
 
 def _generate_ass_subtitles(subtitle_chunks: list, output_ass_path: str, layout: str = 'landscape') -> str:
@@ -111,19 +99,20 @@ def _generate_ass_subtitles(subtitle_chunks: list, output_ass_path: str, layout:
     x_pos, y_pos = (540, 1500) if layout == 'vertical' else (960, 850)
     pos_tag = f"\\an2\\pos({x_pos},{y_pos})\\org({x_pos},{y_pos})"
 
-    # Detect if any chunk contains Indic script
-    has_indic = False
-    for chunk in subtitle_chunks:
-        w_list = chunk.words if hasattr(chunk, 'words') else chunk.get('words', [])
-        if _contains_indic_script(" ".join(w_list)):
-            has_indic = True
-            break
+    # Detect language profile from subtitle text (polymorphic dispatch)
+    sample_text = " ".join(
+        " ".join(chunk.words if hasattr(chunk, 'words') else chunk.get('words', []))
+        for chunk in subtitle_chunks
+    )
+    profile = ProfileManager.detect(sample_text)
 
-    # Choose font based on script
-    font_name = "Nirmala UI" if has_indic else _ASS_FONT_NAME
-
-    # Disable bounce animation for Indic scripts
-    bounce_tag = "" if has_indic else f"{{\\fscx110\\fscy110\\t(0,{_BOUNCE_ENTRY_MS},\\fscx100\\fscy100)}}"
+    font_name = profile.ffmpeg_font_name
+    font_size = profile.ass_font_size
+    margin_v  = profile.ass_margin_v
+    bounce_tag = (
+        f"{{\\fscx110\\fscy110\\t(0,{_BOUNCE_ENTRY_MS},\\fscx100\\fscy100)}}"
+        if profile.ffmpeg_bounce_enabled else ""
+    )
 
     # ── ASS Script Header ────────────────────────────────────────────────────────
     header = (
@@ -143,9 +132,9 @@ def _generate_ass_subtitles(subtitle_chunks: list, output_ass_path: str, layout:
         "ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, "
         "Alignment, MarginL, MarginR, MarginV, Encoding\n"
         # Bold (-1), no italic, no underline, scale 100/100, spacing 0, border 2, shadow 0
-        f"Style: Default,{font_name},{_ASS_FONT_SIZE},"
+        f"Style: Default,{font_name},{font_size},"
         f"{_ASS_TEXT_COLOUR},&H000000FF&,&H00000000&,&H00000000&,"
-        f"-1,0,0,0,100,100,0,0,1,2,0,{_ASS_ALIGNMENT},10,10,{_ASS_MARGIN_V},1\n"
+        f"-1,0,0,0,100,100,0,0,1,2,0,{_ASS_ALIGNMENT},10,10,{margin_v},1\n"
         "\n"
         "[Events]\n"
         "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n"
@@ -168,10 +157,9 @@ def _generate_ass_subtitles(subtitle_chunks: list, output_ass_path: str, layout:
             continue
 
         chunk_start_ts = _ass_ts(start_time)
-        # Ensure minimum 0.5s duration for Indic script chunks to allow shaping
         display_end_time = end_time
-        if has_indic and (end_time - start_time) < 0.5:
-            display_end_time = max(end_time, start_time + 0.5)
+        if (end_time - start_time) < profile.whisper_min_duration:
+            display_end_time = max(end_time, start_time + profile.whisper_min_duration)
         chunk_end_ts   = _ass_ts(display_end_time)
         display_text   = " ".join(words)
 

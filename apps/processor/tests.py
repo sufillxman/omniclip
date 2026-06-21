@@ -371,9 +371,12 @@ class SubtitleChunkingTestCase(TestCase):
     # ── 3. Max-word limit closes chunk (PRIORITY 3) ────────────────────────────
     def test_max_word_limit_closes_chunk(self):
         """
-        8 words with no punctuation should split at 7 + 1.
+        8 words with no punctuation should split at 6 + 2 when using
+        HindiProfile (whisper_max_words=6).
         """
         from apps.processor.services.whisper_service import sentence_aware_chunk
+        from apps.processor.services.language_profiles import HindiProfile
+        profile = HindiProfile()
         words = self._make_words([
             ("One",    0.0, 0.3),
             ("two",    0.3, 0.6),
@@ -384,29 +387,32 @@ class SubtitleChunkingTestCase(TestCase):
             ("seven",  1.8, 2.1),
             ("eight",  2.1, 2.4),
         ])
-        chunks = sentence_aware_chunk(words)
+        chunks = sentence_aware_chunk(words, profile=profile)
         self.assertEqual(len(chunks), 2)
-        self.assertEqual(len(chunks[0].words), 7)
-        self.assertEqual(len(chunks[1].words), 1)
+        self.assertEqual(len(chunks[0].words), 6)
+        self.assertEqual(len(chunks[1].words), 2)
 
     # ── 4. Max-duration limit closes chunk (PRIORITY 2) ───────────────────────
     def test_max_duration_closes_chunk(self):
         """
-        Two words spanning 2.6s (>= 2.5s _MAX_DURATION_S) must produce a single
-        chunk of 2 words, and then a second chunk for any further words.
+        Two words spanning 2.3s (>= 2.2s HindiProfile whisper_max_duration) must
+        produce a single chunk of 2 words, and then a second chunk for any
+        further words.
         """
-        from apps.processor.services.whisper_service import sentence_aware_chunk, _MAX_DURATION_S
+        from apps.processor.services.whisper_service import sentence_aware_chunk
+        from apps.processor.services.language_profiles import HindiProfile
+        profile = HindiProfile()
         words = self._make_words([
             ("Start", 0.0,  1.2),
-            ("slow",  1.2,  2.6),   # chunk duration = 2.6 >= _MAX_DURATION_S
+            ("slow",  1.2,  2.3),   # chunk duration = 2.3 >= 2.2
             ("next",  2.7,  3.0),
         ])
-        chunks = sentence_aware_chunk(words)
+        chunks = sentence_aware_chunk(words, profile=profile)
         self.assertGreaterEqual(len(chunks), 2)
         self.assertEqual(chunks[0].words, ["Start", "slow"])
         self.assertLessEqual(
             chunks[0].end_time - chunks[0].start_time,
-            _MAX_DURATION_S + 0.5,
+            profile.whisper_max_duration + 0.5,
         )
 
     # ── 5. Micro-chunk merges forward without a natural pause ──────────────────
@@ -437,6 +443,8 @@ class SubtitleChunkingTestCase(TestCase):
         in the next chunk. This verifies normal max-word flow is unaffected.
         """
         from apps.processor.services.whisper_service import sentence_aware_chunk
+        from apps.processor.services.language_profiles import HindiProfile
+        profile = HindiProfile()
         words = self._make_words([
             ("one",  0.00, 0.10),
             ("two",  0.10, 0.20),
@@ -444,13 +452,13 @@ class SubtitleChunkingTestCase(TestCase):
             ("four", 0.30, 0.40),
             ("five", 0.40, 0.50),
             ("six",  0.50, 0.60),
-            ("seven",0.60, 0.70),   # 7 words → max_words hit, chunk closes (0.7s > _MIN)
-            ("wait", 0.85, 1.10),   # 0.15s gap after 'seven', new chunk
+            ("seven",0.60, 0.70),   # starts second chunk (max_words hit)
+            ("wait", 0.85, 1.10),   # 0.15s gap, stays in second chunk
         ])
-        chunks = sentence_aware_chunk(words)
+        chunks = sentence_aware_chunk(words, profile=profile)
         self.assertGreaterEqual(len(chunks), 2)
-        self.assertEqual(chunks[0].words, ["one", "two", "three", "four", "five", "six", "seven"])
-        self.assertEqual(chunks[1].words, ["wait"])
+        self.assertEqual(chunks[0].words, ["one", "two", "three", "four", "five", "six"])
+        self.assertEqual(chunks[1].words, ["seven", "wait"])
 
     # ── 7. Sentence-ending micro-chunk never merges (PRIORITY 1 wins) ─────────
     def test_sentence_ending_micro_chunk_never_merges(self):
@@ -535,11 +543,10 @@ class MultilingualAndLimitsTestCase(TestCase):
         self.assertEqual(chunks[2].words, ["English."])
 
     def test_strict_anti_freeze_hard_caps_words(self):
-        """Verify that reaching _MAX_WORDS (7) force-closes the chunk, bypassing micro-chunk merge guard."""
+        """Verify that reaching max_words (6 from HindiProfile) force-closes the chunk, bypassing micro-chunk merge guard."""
         from apps.processor.services.whisper_service import sentence_aware_chunk
-        # All words happen extremely fast (each 0.02s, total 0.14s < _MIN_DURATION_S)
-        # Without bypass, the merge guard would merge them forward.
-        # With bypass, it force-closes at exactly 7 words.
+        from apps.processor.services.language_profiles import HindiProfile
+        profile = HindiProfile()
         words = [
             {"word": "one", "start": 0.0, "end": 0.02},
             {"word": "two", "start": 0.02, "end": 0.04},
@@ -550,20 +557,21 @@ class MultilingualAndLimitsTestCase(TestCase):
             {"word": "seven", "start": 0.12, "end": 0.14},
             {"word": "eight", "start": 0.14, "end": 0.16},
         ]
-        chunks = sentence_aware_chunk(words)
+        chunks = sentence_aware_chunk(words, profile=profile)
         self.assertGreaterEqual(len(chunks), 2)
-        self.assertEqual(chunks[0].words, ["one", "two", "three", "four", "five", "six", "seven"])
-        self.assertEqual(chunks[1].words, ["eight"])
+        self.assertEqual(chunks[0].words, ["one", "two", "three", "four", "five", "six"])
+        self.assertEqual(chunks[1].words, ["seven", "eight"])
 
     def test_strict_anti_freeze_hard_caps_duration(self):
-        """Verify that reaching _MAX_DURATION_S (2.5s) force-closes the chunk, bypassing micro-chunk merge guard."""
+        """Verify that reaching max_duration force-closes the chunk, bypassing micro-chunk merge guard."""
         from apps.processor.services.whisper_service import sentence_aware_chunk
-        # One long word of 2.6s (>= 2.5s _MAX_DURATION_S)
+        from apps.processor.services.language_profiles import HindiProfile
+        profile = HindiProfile()
         words = [
-            {"word": "longword", "start": 0.0, "end": 2.6},
+            {"word": "longword", "start": 0.0, "end": 2.3},
             {"word": "next", "start": 2.7, "end": 2.8},
         ]
-        chunks = sentence_aware_chunk(words)
+        chunks = sentence_aware_chunk(words, profile=profile)
         self.assertGreaterEqual(len(chunks), 2)
         self.assertEqual(chunks[0].words, ["longword"])
         self.assertEqual(chunks[1].words, ["next"])

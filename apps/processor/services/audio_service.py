@@ -23,6 +23,7 @@ import requests
 import ffmpeg
 
 from django.conf import settings
+from apps.processor.services.language_profiles import ProfileManager
 
 logger = logging.getLogger(__name__)
 
@@ -57,18 +58,7 @@ VOICE_MAP = {
 _DEFAULT_ELEVENLABS_VOICE = "pNInz6obpgDQGcFmaJgB"   # Adam
 _DEFAULT_EDGE_VOICE       = "en-US-ChristopherNeural"
 
-def _detect_script_language(text: str) -> str:
-    """Detect if text contains Hindi, Gujarati, or English script."""
-    has_devanagari = any(0x0900 <= ord(c) <= 0x097F for c in text)
-    has_gujarati = any(0x0A80 <= ord(c) <= 0x0AFF for c in text)
-    if has_devanagari:
-        return "hindi"
-    if has_gujarati:
-        return "gujarati"
-    return "english"
-
-_DEFAULT_HINDI_EDGE_VOICE = "hi-IN-MadhurNeural"
-_DEFAULT_GUJARATI_EDGE_VOICE = "gu-IN-NiranjanNeural"
+# Language detection replaced by ProfileManager.detect() in language_profiles.py
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -92,11 +82,6 @@ def _normalise_text(text: str) -> str:
     return text
 
 
-# _build_ssml() has been intentionally removed.
-# edge-tts wraps input in its own SSML internally before hitting the Azure
-# API — feeding it a pre-built <speak> document causes the XML tags to be
-# read aloud as literal text.  Prosody control is achieved via the native
-# --rate CLI flag instead.
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -119,52 +104,45 @@ class EdgeTTSProvider:
     @staticmethod
     def generate(text: str, voice_id: str, output_wav_path: str) -> None:
         """
-        Render normalised plain text to a WAV file at output_wav_path.
+        Render text wrapped in language-appropriate SSML to a WAV file.
+        Uses LanguageProfile to drive voice, SSML wrapping, and prosody.
         Raises RuntimeError on failure so the caller can fall through.
         """
-        # Detect script language BEFORE voice lookup
-        detected_lang = _detect_script_language(text)
+        profile = ProfileManager.detect(text)
 
-        # Get voice from map or determine appropriate fallback
+        # Get voice from map or use profile default
         mapping = VOICE_MAP.get(voice_id)
         if mapping:
             _, edge_voice = mapping
         else:
-            # Intelligent fallback based on detected script
-            if detected_lang == "hindi":
-                edge_voice = _DEFAULT_HINDI_EDGE_VOICE
-            elif detected_lang == "gujarati":
-                edge_voice = _DEFAULT_GUJARATI_EDGE_VOICE
-            else:
-                edge_voice = _DEFAULT_EDGE_VOICE
+            edge_voice = profile.tts_voice_id
 
-        # Normalise text — keep all punctuation intact so Azure Neural can
-        # apply its own natural prosodic pauses at ., ,, ?, !
         normalised = _normalise_text(text)
 
-        # Write plain text to a temp file (edge-tts --file accepts plain text
-        # only; it wraps it in SSML internally before the Azure API call)
-        with tempfile.NamedTemporaryFile(
-            suffix='.txt', mode='w', encoding='utf-8', delete=False
-        ) as txt_file:
-            txt_file.write(normalised)
-            txt_path = txt_file.name
+        # Build SSML via the active profile (injects <lang>, <prosody>, <break>)
+        ssml = profile.wrap_ssml(normalised)
 
-        # edge-tts writes raw VBR MP3 first; we convert immediately to WAV
+        # Write SSML to temp file — edge-tts auto-detects <speak> and treats
+        # the content as SSML rather than plain text, enabling full Azure
+        # Neural TTS features (language tags, prosody, natural pauses).
+        with tempfile.NamedTemporaryFile(
+            suffix='.xml', mode='w', encoding='utf-8', delete=False
+        ) as ssml_file:
+            ssml_file.write(ssml)
+            ssml_path = ssml_file.name
+
         raw_mp3_fd, raw_mp3_path = tempfile.mkstemp(suffix='.mp3')
         os.close(raw_mp3_fd)
 
         try:
             logger.info(
-                f"[EdgeTTS] Rendering plain text with voice '{edge_voice}' "
-                f"at rate=-5% via subprocess CLI..."
+                f"[EdgeTTS] Rendering SSML with voice '{edge_voice}' via subprocess CLI..."
             )
             result = subprocess.run(
                 [
                     'edge-tts',
                     '--voice',       edge_voice,
-                    '--file',        txt_path,       # plain text input file
-                    '--rate=-5%',                    # podcast cadence (native flag)
+                    '--file',        ssml_path,
                     '--write-media', raw_mp3_path,
                 ],
                 capture_output=True,
@@ -182,7 +160,6 @@ class EdgeTTSProvider:
                 f"Converting VBR MP3 → PCM WAV at {output_wav_path} ..."
             )
 
-            # Convert to CBR WAV (PCM 16-bit, 16 kHz mono)
             (
                 ffmpeg
                 .input(raw_mp3_path)
@@ -201,8 +178,7 @@ class EdgeTTSProvider:
             raise RuntimeError("edge-tts CLI timed out after 120 seconds.")
 
         finally:
-            # Always clean up temp files regardless of success or failure
-            for path in (txt_path, raw_mp3_path):
+            for path in (ssml_path, raw_mp3_path):
                 try:
                     if os.path.exists(path):
                         os.remove(path)
