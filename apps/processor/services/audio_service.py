@@ -6,26 +6,34 @@ Routing logic:
   2. EdgeTTSProvider     — zero-cost Microsoft Neural TTS, automatic fallback
 
 EdgeTTSProvider features:
-  - Phoneme-level SSML injection (clause pauses at , . ? !)
+  - Uses edge_tts.Communicate Python API with asyncio.run() (no subprocess)
+  - Native rate/pitch params via LanguageProfile (rate, pitch)
+  - Plain text input (no SSML — edge-tts reads tags literally)
+  - Post-save file-size validation (raises TTSGenerationError on 0 bytes)
   - Text normalisation pre-pass  (%, $, abbreviations → spoken form)
-  - subprocess.run() CLI execution — no asyncio loop conflicts inside Celery
   - Immediate WAV conversion via ffmpeg-python after output to guarantee
     100% accurate ffprobe duration detection (no VBR-MP3 drift)
 """
 
 import os
 import re
+import asyncio
 import logging
-import subprocess
 import tempfile
 import base64
 import requests
 import ffmpeg
+import edge_tts
 
 from django.conf import settings
 from apps.processor.services.language_profiles import ProfileManager
 
 logger = logging.getLogger(__name__)
+
+
+class TTSGenerationError(Exception):
+    """Raised when TTS produces empty or otherwise unusable audio output."""
+    pass
 
 # ── Silent WAV fallback (1 s silence, 16-bit PCM 16 kHz mono) ────────────────
 # Generated with: ffmpeg -f lavfi -i anullsrc=r=16000:cl=mono -t 1 -c:a pcm_s16le silent.wav
@@ -90,13 +98,13 @@ def _normalise_text(text: str) -> str:
 
 class EdgeTTSProvider:
     """
-    Renders audio using the Microsoft edge-tts CLI tool via subprocess.run().
-    This avoids all asyncio event-loop conflicts inside Celery workers.
+    Renders audio using the edge_tts.Communicate Python API with
+    asyncio.run().  Avoids fragile subprocess I/O.
 
     Pipeline:
       1. Normalise text  (symbols, currencies, abbreviations)
-      2. Write plain text to a temp file  (NO SSML — edge-tts wraps internally)
-      3. edge-tts CLI with --rate=-5% → raw VBR MP3
+      2. edge_tts.Communicate(text, voice, rate, pitch) → raw VBR MP3
+      3. os.path.getsize validation — raises TTSGenerationError on 0 bytes
       4. ffmpeg re-encode → final PCM WAV (16-bit, 16 kHz, mono)
          guarantees 100% accurate ffprobe duration detection
     """
@@ -104,9 +112,9 @@ class EdgeTTSProvider:
     @staticmethod
     def generate(text: str, voice_id: str, output_wav_path: str) -> None:
         """
-        Render text wrapped in language-appropriate SSML to a WAV file.
-        Uses LanguageProfile to drive voice, SSML wrapping, and prosody.
-        Raises RuntimeError on failure so the caller can fall through.
+        Render plain text to a WAV file using the edge_tts Python API.
+        Validates file size post-save.  Raises TTSGenerationError or
+        RuntimeError on failure so the caller can fall through.
         """
         profile = ProfileManager.detect(text)
 
@@ -119,45 +127,39 @@ class EdgeTTSProvider:
 
         normalised = _normalise_text(text)
 
-        # Build SSML via the active profile (injects <lang>, <prosody>, <break>)
-        ssml = profile.wrap_ssml(normalised)
-
-        # Write SSML to temp file — edge-tts auto-detects <speak> and treats
-        # the content as SSML rather than plain text, enabling full Azure
-        # Neural TTS features (language tags, prosody, natural pauses).
-        with tempfile.NamedTemporaryFile(
-            suffix='.xml', mode='w', encoding='utf-8', delete=False
-        ) as ssml_file:
-            ssml_file.write(ssml)
-            ssml_path = ssml_file.name
+        if not normalised:
+            raise TTSGenerationError("Normalised text is empty — nothing to synthesise.")
 
         raw_mp3_fd, raw_mp3_path = tempfile.mkstemp(suffix='.mp3')
         os.close(raw_mp3_fd)
 
         try:
             logger.info(
-                f"[EdgeTTS] Rendering SSML with voice '{edge_voice}' via subprocess CLI..."
+                f"[EdgeTTS] Generating TTS for: {normalised[:50]}... | "
+                f"Rate: {profile.tts_rate} | Pitch: {profile.tts_pitch} | "
+                f"Voice: {edge_voice}"
             )
-            result = subprocess.run(
-                [
-                    'edge-tts',
-                    '--voice',       edge_voice,
-                    '--file',        ssml_path,
-                    '--write-media', raw_mp3_path,
-                ],
-                capture_output=True,
-                text=True,
-                timeout=120,
+
+            communicate = edge_tts.Communicate(
+                normalised,
+                edge_voice,
+                rate=profile.tts_rate,
+                pitch=profile.tts_pitch,
             )
-            if result.returncode != 0:
-                raise RuntimeError(
-                    f"edge-tts CLI exited with code {result.returncode}. "
-                    f"stderr: {result.stderr.strip()}"
+
+            asyncio.run(communicate.save(raw_mp3_path))
+
+            # — File-size validation -------------------------------------------------
+            mp3_size = os.path.getsize(raw_mp3_path)
+            if mp3_size == 0:
+                raise TTSGenerationError(
+                    f"Audio file is 0 bytes — edge-tts produced no output. "
+                    f"voice={edge_voice}, rate={profile.tts_rate}, pitch={profile.tts_pitch}"
                 )
 
             logger.info(
-                f"[EdgeTTS] CLI render complete. "
-                f"Converting VBR MP3 → PCM WAV at {output_wav_path} ..."
+                f"[EdgeTTS] MP3 render complete ({mp3_size} bytes). "
+                f"Converting → PCM WAV at {output_wav_path} ..."
             )
 
             (
@@ -172,18 +174,32 @@ class EdgeTTSProvider:
                 .overwrite_output()
                 .run(capture_stdout=True, capture_stderr=True)
             )
-            logger.info(f"[EdgeTTS] WAV output written successfully: {output_wav_path}")
 
-        except subprocess.TimeoutExpired:
-            raise RuntimeError("edge-tts CLI timed out after 120 seconds.")
+            wav_size = os.path.getsize(output_wav_path)
+            if wav_size == 0:
+                raise TTSGenerationError(
+                    f"WAV file is 0 bytes after ffmpeg conversion."
+                )
+
+            logger.info(
+                f"[EdgeTTS] WAV output written successfully: {output_wav_path} "
+                f"({wav_size} bytes)"
+            )
+
+        except (TTSGenerationError, RuntimeError):
+            raise
+
+        except Exception as exc:
+            raise RuntimeError(
+                f"edge-tts Python API failed: {exc}"
+            ) from exc
 
         finally:
-            for path in (ssml_path, raw_mp3_path):
-                try:
-                    if os.path.exists(path):
-                        os.remove(path)
-                except Exception:
-                    pass
+            try:
+                if os.path.exists(raw_mp3_path):
+                    os.remove(raw_mp3_path)
+            except Exception:
+                pass
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -259,7 +275,7 @@ def generate_tts_audio(script_text: str, voice_id: str, project_id: str) -> str:
 
     Provider priority:
         1. ElevenLabsProvider  (premium, if API key is configured)
-        2. EdgeTTSProvider     (zero-cost Microsoft Neural, plain text + --rate=-5%)
+        2. EdgeTTSProvider     (zero-cost Microsoft Neural, Python API, file-size validated)
         3. Silent WAV stub     (last resort — keeps pipeline alive for testing)
     """
     audio_dir = os.path.join(settings.MEDIA_ROOT, 'projects', str(project_id), 'audio')

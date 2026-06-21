@@ -1,5 +1,4 @@
-import re
-from abc import ABC, abstractmethod
+from abc import ABC
 from typing import List, Tuple
 
 
@@ -13,8 +12,8 @@ class LanguageProfile(ABC):
 
     # ── TTS ──────────────────────────────────────────────────────────────────
     tts_voice_id: str
-    tts_ssml_lang: str
     tts_rate: str
+    tts_pitch: str
 
     # ── Whisper subtitle chunking ─────────────────────────────────────────────
     whisper_max_words: int
@@ -33,10 +32,6 @@ class LanguageProfile(ABC):
 
     # ── Detection heuristics ─────────────────────────────────────────────────
     detection_indicators: List[str]
-
-    @abstractmethod
-    def wrap_ssml(self, text: str) -> str:
-        ...
 
     def validate_unicode(self, text: str) -> Tuple[bool, str]:
         """Check text only contains characters from allowed blocks.
@@ -59,8 +54,8 @@ class LanguageProfile(ABC):
 class EnglishProfile(LanguageProfile):
 
     tts_voice_id = "en-US-ChristopherNeural"
-    tts_ssml_lang = "en-US"
-    tts_rate = "-5%"
+    tts_rate = "+0%"
+    tts_pitch = "+0Hz"
 
     whisper_max_words = 9
     whisper_max_duration = 2.5
@@ -82,24 +77,11 @@ class EnglishProfile(LanguageProfile):
 
     detection_indicators: List[str] = []
 
-    def wrap_ssml(self, text: str) -> str:
-        escaped = _escape_xml(text)
-        return (
-            f'<speak version="1.0" xml:lang="{self.tts_ssml_lang}">'
-            f'<lang xml:lang="{self.tts_ssml_lang}">'
-            f'<prosody rate="{self.tts_rate}" pitch="0%">'
-            f'{_inject_breaks(escaped)}'
-            f'</prosody>'
-            f'</lang>'
-            f'</speak>'
-        )
-
-
 class HindiProfile(LanguageProfile):
 
     tts_voice_id = "hi-IN-MadhurNeural"
-    tts_ssml_lang = "hi-IN"
     tts_rate = "-5%"
+    tts_pitch = "+0Hz"
 
     whisper_max_words = 6
     whisper_max_duration = 2.2
@@ -123,24 +105,11 @@ class HindiProfile(LanguageProfile):
 
     detection_indicators: List[str] = ["hindi", "हिंदी", "हिन्दी"]
 
-    def wrap_ssml(self, text: str) -> str:
-        escaped = _escape_xml(text)
-        return (
-            f'<speak version="1.0" xml:lang="{self.tts_ssml_lang}">'
-            f'<lang xml:lang="{self.tts_ssml_lang}">'
-            f'<prosody rate="{self.tts_rate}" pitch="0%">'
-            f'{_inject_breaks(escaped)}'
-            f'</prosody>'
-            f'</lang>'
-            f'</speak>'
-        )
-
-
 class GujaratiProfile(LanguageProfile):
 
     tts_voice_id = "gu-IN-NiranjanNeural"
-    tts_ssml_lang = "gu-IN"
     tts_rate = "-5%"
+    tts_pitch = "+0Hz"
 
     whisper_max_words = 6
     whisper_max_duration = 2.2
@@ -162,37 +131,6 @@ class GujaratiProfile(LanguageProfile):
     rejected_unicode_blocks: List[Tuple[int, int]] = []
 
     detection_indicators: List[str] = ["gujarati", "ગુજરાતી"]
-
-    def wrap_ssml(self, text: str) -> str:
-        escaped = _escape_xml(text)
-        return (
-            f'<speak version="1.0" xml:lang="{self.tts_ssml_lang}">'
-            f'<lang xml:lang="{self.tts_ssml_lang}">'
-            f'<prosody rate="{self.tts_rate}" pitch="0%">'
-            f'{_inject_breaks(escaped)}'
-            f'</prosody>'
-            f'</lang>'
-            f'</speak>'
-        )
-
-
-def _escape_xml(text: str) -> str:
-    text = text.replace("&", "&amp;")
-    text = text.replace("<", "&lt;")
-    text = text.replace(">", "&gt;")
-    text = text.replace('"', "&quot;")
-    text = text.replace("'", "&apos;")
-    return text
-
-
-def _inject_breaks(text: str) -> str:
-    """Insert SSML <break> tags after punctuation for natural prosody.
-    Supports ASCII and Indian script sentence enders (। ॥)."""
-    text = re.sub(r'([.!?।॥])\s+', r'\1<break time="400ms"/>', text)
-    text = re.sub(r'([,;:])\s+', r'\1<break time="200ms"/>', text)
-    text = re.sub(r'([.!?।॥])<break time="400ms"/>(\s*["\'""\'"])', r'\1\2<break time="400ms"/>', text)
-    return text
-
 
 class ProfileManager:
     """Factory that returns the correct LanguageProfile for a given text or prompt."""

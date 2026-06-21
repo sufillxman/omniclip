@@ -29,7 +29,8 @@ from typing import List, Tuple
 @pytest.mark.parametrize("profile_class, expected", [
     ("EnglishProfile", {
         "tts_voice_id": "en-US-ChristopherNeural",
-        "tts_ssml_lang": "en-US",
+        "tts_rate": "+0%",
+        "tts_pitch": "+0Hz",
         "whisper_max_words": 9,
         "whisper_max_duration": 2.5,
         "whisper_min_duration": 0.3,
@@ -40,7 +41,8 @@ from typing import List, Tuple
     }),
     ("HindiProfile", {
         "tts_voice_id": "hi-IN-MadhurNeural",
-        "tts_ssml_lang": "hi-IN",
+        "tts_rate": "-5%",
+        "tts_pitch": "+0Hz",
         "whisper_max_words": 6,
         "whisper_max_duration": 2.2,
         "whisper_min_duration": 0.5,
@@ -51,7 +53,8 @@ from typing import List, Tuple
     }),
     ("GujaratiProfile", {
         "tts_voice_id": "gu-IN-NiranjanNeural",
-        "tts_ssml_lang": "gu-IN",
+        "tts_rate": "-5%",
+        "tts_pitch": "+0Hz",
         "whisper_max_words": 6,
         "whisper_max_duration": 2.2,
         "whisper_min_duration": 0.5,
@@ -154,64 +157,7 @@ def test_profile_manager_detect_from_prompt(prompt, expected_class_name):
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# 4. SSML Wrapping — profile.wrap_ssml()
-# ═══════════════════════════════════════════════════════════════════════════════
-
-def test_english_ssml_wrapping():
-    from apps.processor.services.language_profiles import EnglishProfile
-    profile = EnglishProfile()
-    text = "Hello world. How are you? Fine, thanks."
-    ssml = profile.wrap_ssml(text)
-    assert '<speak version="1.0" xml:lang="en-US">' in ssml
-    assert '<lang xml:lang="en-US">' in ssml
-    assert '<prosody rate="-5%" pitch="0%">' in ssml
-    assert 'world.<break time="400ms"/>' in ssml
-    assert 'you?<break time="400ms"/>' in ssml
-    assert 'Fine,<break time="200ms"/>' in ssml
-    assert '</speak>' in ssml
-
-
-def test_hindi_ssml_wrapping():
-    from apps.processor.services.language_profiles import HindiProfile
-    profile = HindiProfile()
-    text = "नमस्ते दुनिया। यह हिंदी है।"
-    ssml = profile.wrap_ssml(text)
-    assert '<speak version="1.0" xml:lang="hi-IN">' in ssml
-    assert '<lang xml:lang="hi-IN">' in ssml
-    assert '<prosody rate="-5%" pitch="0%">' in ssml
-    assert 'दुनिया।<break time="400ms"/>' in ssml
-    assert 'है।<break time="400ms"/>' in ssml or 'है।</prosody>' in ssml
-    assert '</speak>' in ssml
-
-
-def test_gujarati_ssml_wrapping():
-    from apps.processor.services.language_profiles import GujaratiProfile
-    profile = GujaratiProfile()
-    text = "નમસ્તે દુનિયા। આ ગુજરાતી છે।"
-    ssml = profile.wrap_ssml(text)
-    assert '<speak version="1.0" xml:lang="gu-IN">' in ssml
-    assert '<lang xml:lang="gu-IN">' in ssml
-    assert '<prosody rate="-5%" pitch="0%">' in ssml
-    assert 'દુનિયા।<break time="400ms"/>' in ssml
-    assert 'છે।<break time="400ms"/>' in ssml or 'છે।</prosody>' in ssml
-    assert '</speak>' in ssml
-
-
-def test_ssml_xml_escaping():
-    from apps.processor.services.language_profiles import EnglishProfile
-    profile = EnglishProfile()
-    text = "AT&T <test> & \"quotes\""
-    ssml = profile.wrap_ssml(text)
-    assert "&amp;" in ssml
-    assert "&lt;" in ssml
-    assert "&gt;" in ssml
-    assert "&quot;" in ssml
-    assert "<test>" not in ssml
-    assert "AT&T" not in ssml
-
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# 5. Unicode Validation — profile.validate_unicode()
+# 4. Unicode Validation — profile.validate_unicode()
 # ═══════════════════════════════════════════════════════════════════════════════
 
 def test_hindi_validate_pure_devanagari():
@@ -512,7 +458,6 @@ def test_full_pipeline_hindi_profile_has_correct_cadence():
     assert profile.ffmpeg_bounce_enabled is False
     assert profile.tts_voice_id == "hi-IN-MadhurNeural"
     assert profile.ffmpeg_font_name == "Nirmala UI"
-    assert profile.tts_ssml_lang == "hi-IN"
 
 
 def test_full_pipeline_gujarati_profile_has_correct_cadence():
@@ -527,7 +472,6 @@ def test_full_pipeline_gujarati_profile_has_correct_cadence():
     assert profile.ffmpeg_bounce_enabled is False
     assert profile.tts_voice_id == "gu-IN-NiranjanNeural"
     assert profile.ffmpeg_font_name == "Nirmala UI"
-    assert profile.tts_ssml_lang == "gu-IN"
 
 
 def test_no_english_logic_bleeds_into_hindi():
@@ -542,7 +486,6 @@ def test_no_english_logic_bleeds_into_hindi():
     assert hi.ffmpeg_bounce_enabled != en.ffmpeg_bounce_enabled
     assert hi.ffmpeg_font_name != en.ffmpeg_font_name
     assert hi.tts_voice_id != en.tts_voice_id
-    assert hi.tts_ssml_lang != en.tts_ssml_lang
 
 
 def test_no_english_logic_bleeds_into_gujarati():
@@ -556,7 +499,6 @@ def test_no_english_logic_bleeds_into_gujarati():
     assert gu.ffmpeg_bounce_enabled != en.ffmpeg_bounce_enabled
     assert gu.ffmpeg_font_name != en.ffmpeg_font_name
     assert gu.tts_voice_id != en.tts_voice_id
-    assert gu.tts_ssml_lang != en.tts_ssml_lang
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -575,34 +517,6 @@ def test_mixed_scripts_detects_hindi_first():
     text = "नमस्ते નમસ્તે"  # Hindi + Gujarati
     profile = ProfileManager.detect(text)
     assert isinstance(profile, HindiProfile)
-
-
-def test_edge_case_ssml_no_punctuation():
-    """SSML wrapping without any punctuation should not insert breaks."""
-    from apps.processor.services.language_profiles import EnglishProfile
-    profile = EnglishProfile()
-    text = "hello world no punctuation here"
-    ssml = profile.wrap_ssml(text)
-    assert "<break" not in ssml
-
-
-def test_edge_case_ssml_multiple_commas():
-    """Multiple commas should each get a 200ms break."""
-    from apps.processor.services.language_profiles import EnglishProfile
-    profile = EnglishProfile()
-    text = "one, two, three, four"
-    ssml = profile.wrap_ssml(text)
-    assert ssml.count('<break time="200ms"/>') == 3
-
-
-def test_edge_case_gujarati_ssml_purna_viram():
-    """Gujarati full stop (।) should get 400ms break like English period."""
-    from apps.processor.services.language_profiles import GujaratiProfile
-    profile = GujaratiProfile()
-    text = "પહેલું વાક્ય। બીજું વાક્ય।"
-    ssml = profile.wrap_ssml(text)
-    assert '<break time="400ms"/>' in ssml
-    assert '।<break time="400ms"/>' in ssml
 
 
 def test_voice_id_fallbacks_mapping_present():
