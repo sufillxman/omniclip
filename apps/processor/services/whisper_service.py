@@ -106,6 +106,19 @@ def sentence_aware_chunk(word_timestamps: list, profile: Optional['LanguageProfi
         hits_time_limit  = current_duration >= max_duration
         is_last_word     = (i == total_tokens - 1)
 
+        # ── Lookahead merge guard: suppress word-limit close when ≤2 words
+        #    remain before the next sentence boundary.  This prevents orphaned
+        #    1–2 word chunks like ["हैं?"] trailing after a hard max_words split.
+        if hits_word_limit and not hits_sentence and not hits_time_limit and not is_last_word:
+            words_until_boundary = 0
+            for j in range(i + 1, total_tokens):
+                words_until_boundary += 1
+                nw = word_timestamps[j]["word"].rstrip()
+                if nw and nw[-1] in _SENTENCE_ENDERS:
+                    break
+            if words_until_boundary <= 2:
+                hits_word_limit = False
+
         should_close = hits_sentence or hits_word_limit or hits_time_limit or is_last_word
 
         if not should_close:

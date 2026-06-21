@@ -368,11 +368,12 @@ class SubtitleChunkingTestCase(TestCase):
         self.assertEqual(chunks[0].words, ["Hi."])
         self.assertEqual(chunks[1].words, ["How", "are", "you?"])
 
-    # ── 3. Max-word limit closes chunk (PRIORITY 3) ────────────────────────────
+    # ── 3. Max-word limit with lookahead merge (PRIORITY 3) ────────────────────
     def test_max_word_limit_closes_chunk(self):
         """
-        8 words with no punctuation should split at 6 + 2 when using
-        HindiProfile (whisper_max_words=6).
+        8 words with no punctuation, HindiProfile (whisper_max_words=6).
+        The lookahead merge guard merges the trailing 2 words (≤2) into the
+        first chunk to prevent orphaned 2-word chunks → 1 chunk of 8 words.
         """
         from apps.processor.services.whisper_service import sentence_aware_chunk
         from apps.processor.services.language_profiles import HindiProfile
@@ -388,9 +389,8 @@ class SubtitleChunkingTestCase(TestCase):
             ("eight",  2.1, 2.4),
         ])
         chunks = sentence_aware_chunk(words, profile=profile)
-        self.assertEqual(len(chunks), 2)
-        self.assertEqual(len(chunks[0].words), 6)
-        self.assertEqual(len(chunks[1].words), 2)
+        self.assertEqual(len(chunks), 1)
+        self.assertEqual(len(chunks[0].words), 8)
 
     # ── 4. Max-duration limit closes chunk (PRIORITY 2) ───────────────────────
     def test_max_duration_closes_chunk(self):
@@ -543,7 +543,7 @@ class MultilingualAndLimitsTestCase(TestCase):
         self.assertEqual(chunks[2].words, ["English."])
 
     def test_strict_anti_freeze_hard_caps_words(self):
-        """Verify that reaching max_words (6 from HindiProfile) force-closes the chunk, bypassing micro-chunk merge guard."""
+        """Verify that reaching max_words with trailing orphans (≤2) triggers lookahead merge."""
         from apps.processor.services.whisper_service import sentence_aware_chunk
         from apps.processor.services.language_profiles import HindiProfile
         profile = HindiProfile()
@@ -558,9 +558,8 @@ class MultilingualAndLimitsTestCase(TestCase):
             {"word": "eight", "start": 0.14, "end": 0.16},
         ]
         chunks = sentence_aware_chunk(words, profile=profile)
-        self.assertGreaterEqual(len(chunks), 2)
-        self.assertEqual(chunks[0].words, ["one", "two", "three", "four", "five", "six"])
-        self.assertEqual(chunks[1].words, ["seven", "eight"])
+        self.assertEqual(len(chunks), 1)
+        self.assertEqual(len(chunks[0].words), 8)
 
     def test_strict_anti_freeze_hard_caps_duration(self):
         """Verify that reaching max_duration force-closes the chunk, bypassing micro-chunk merge guard."""

@@ -222,8 +222,9 @@ def test_english_rejects_gujarati():
 
 def test_sentence_aware_chunk_respects_english_profile():
     """
-    EnglishProfile has whisper_max_words=9. 11 words with no punctuation
-    should split into 9 + 2.
+    EnglishProfile has whisper_max_words=9. 11 words with no punctuation:
+    the lookahead merges the trailing 2 words (≤2) into the first chunk
+    to prevent orphans → 1 chunk of 11 words.
     """
     from apps.processor.services.whisper_service import sentence_aware_chunk
     from apps.processor.services.language_profiles import EnglishProfile
@@ -234,15 +235,15 @@ def test_sentence_aware_chunk_respects_english_profile():
         for i in range(11)
     ]
     chunks = sentence_aware_chunk(words, profile=profile)
-    assert len(chunks) == 2, f"Expected 2 chunks, got {len(chunks)}"
-    assert len(chunks[0].words) == 9, f"First chunk should have 9 words, got {len(chunks[0].words)}"
-    assert len(chunks[1].words) == 2, f"Second chunk should have 2 words, got {len(chunks[1].words)}"
+    assert len(chunks) == 1, f"Expected 1 chunk (lookahead merged orphans), got {len(chunks)}"
+    assert len(chunks[0].words) == 11, f"All 11 words should merge, got {len(chunks[0].words)}"
 
 
 def test_sentence_aware_chunk_respects_hindi_profile():
     """
-    HindiProfile has whisper_max_words=6. 8 words with no punctuation
-    should split into 6 + 2 (not 9+2 like English).
+    HindiProfile has whisper_max_words=6. 8 words with no punctuation:
+    the lookahead merges the trailing 2 words (≤2) into the first chunk
+    to prevent orphans → 1 chunk of 8 words.
     """
     from apps.processor.services.whisper_service import sentence_aware_chunk
     from apps.processor.services.language_profiles import HindiProfile
@@ -253,9 +254,8 @@ def test_sentence_aware_chunk_respects_hindi_profile():
         for i in range(8)
     ]
     chunks = sentence_aware_chunk(words, profile=profile)
-    assert len(chunks) == 2, f"Expected 2 chunks, got {len(chunks)}"
-    assert len(chunks[0].words) == 6, f"Hindi chunk should have 6 words, got {len(chunks[0].words)}"
-    assert len(chunks[1].words) == 2, f"Second chunk should have 2 words, got {len(chunks[1].words)}"
+    assert len(chunks) == 1, f"Expected 1 chunk (lookahead merged orphans), got {len(chunks)}"
+    assert len(chunks[0].words) == 8, f"All 8 words should merge, got {len(chunks[0].words)}"
 
 
 def test_sentence_aware_chunk_auto_detects_profile():
@@ -265,15 +265,15 @@ def test_sentence_aware_chunk_auto_detects_profile():
     """
     from apps.processor.services.whisper_service import sentence_aware_chunk
 
-    # Pure English → EnglishProfile → 9 word max
+    # Pure English → EnglishProfile → 9 word max, 10 words → lookahead merges 1 orphan
     eng_words = [
         {"word": f"word{i}", "start": i * 0.2, "end": (i + 1) * 0.2}
         for i in range(10)
     ]
     eng_chunks = sentence_aware_chunk(eng_words)
-    assert len(eng_chunks[0].words) == 9
+    assert len(eng_chunks[0].words) == 10, "Lookahead should merge the 1 trailing word"
 
-    # Hindi text → HindiProfile → 6 word max
+    # Hindi text → HindiProfile → 6 word max, 8 words → lookahead merges 2 orphans
     hin_words = [
         {"word": "नमस्ते", "start": 0.0, "end": 0.1},
         {"word": "दुनिया", "start": 0.1, "end": 0.2},
@@ -285,7 +285,7 @@ def test_sentence_aware_chunk_auto_detects_profile():
         {"word": "अच्छा", "start": 0.7, "end": 0.8},
     ]
     hin_chunks = sentence_aware_chunk(hin_words)
-    assert len(hin_chunks[0].words) == 6
+    assert len(hin_chunks[0].words) == 8, "Lookahead should merge the 2 trailing words"
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
