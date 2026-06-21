@@ -12,12 +12,20 @@ logger = logging.getLogger(__name__)
 class TimelineSegment(BaseModel):
     chunk_index: int = Field(..., description="Sequential index of the segment starting at 0")
     text: str = Field(..., description="The exact words spoken in this segment (7 to 9 words)")
-    visual_keyword: str = Field(..., description="A unique, context-specific keyword for video search. You MUST provide only 1 or 2 simple words for the visual keyword (e.g., \"robot\", \"city\", \"technology\"). DO NOT write long sentences or descriptive phrases, as this breaks the Pexels API search.")
+    visual_keyword: str = Field(
+        ...,
+        description=(
+            "A unique, context-specific keyword for video search in ENGLISH ONLY. "
+            "You MUST provide only 1 or 2 simple words for the visual keyword (e.g., \"robot\", \"city\", \"technology\"). "
+            "DO NOT write Hindi, Gujarati, or any non-Latin script. DO NOT write long sentences or descriptive phrases, "
+            "as this breaks the Pexels API search which requires English keywords."
+        )
+    )
 
 class VideoScript(BaseModel):
-    title: str = Field(..., description="Catchy title of the video")
-    seo_tags: List[str] = Field(..., description="SEO keywords")
-    voiceover_script: str = Field(..., description="Full continuous text for TTS narration")
+    title: str = Field(..., description="Catchy title of the video in ENGLISH ONLY regardless of the input prompt language.")
+    seo_tags: List[str] = Field(..., description="SEO keywords in ENGLISH ONLY regardless of the input prompt language.")
+    voiceover_script: str = Field(..., description="Full continuous text for TTS narration in the native target script/language matching the prompt's language request (e.g. Devanagari script for Hindi, Gujarati script for Gujarati).")
     json_timeline: List[TimelineSegment] = Field(..., description="List of visual timeline segments sync'd with the voiceover")
 
 # Sequential fallback chain — primary model first, then progressively more stable fallbacks
@@ -56,26 +64,28 @@ class GeminiService:
             f"optimized for the target format: '{format_type}'. "
             "You must return a valid JSON object matching the following structure exactly:\n"
             "{\n"
-            "  \"title\": \"Short catchy title of the video\",\n"
-            "  \"seo_tags\": [\"keyword1\", \"keyword2\", \"keyword3\"],\n"
-            "  \"voiceover_script\": \"Full, continuous, fluid text for Text-to-Speech narration without labels or actions.\",\n"
+            "  \"title\": \"Short catchy title of the video in English\",\n"
+            "  \"seo_tags\": [\"english_keyword1\", \"english_keyword2\", \"english_keyword3\"],\n"
+            "  \"voiceover_script\": \"Full, continuous, fluid text for Text-to-Speech narration in the target language (use Devanagari script for Hindi, Gujarati script for Gujarati) without labels or actions.\",\n"
             "  \"json_timeline\": [\n"
             "     {\n"
             "       \"chunk_index\": 0,\n"
-            "       \"text\": \"The exact words spoken in this segment (7 to 9 words).\",\n"
-            "       \"visual_keyword\": \"You MUST provide only 1 or 2 simple words for the visual keyword (e.g., \\\"robot\\\", \\\"city\\\", \\\"technology\\\"). DO NOT write long sentences or descriptive phrases, as this breaks the Pexels API search.\"\n"
+            "       \"text\": \"The exact words spoken in this segment in the target language script (7 to 9 words).\",\n"
+            "       \"visual_keyword\": \"A unique, context-specific keyword for video search in ENGLISH ONLY (e.g., \\\"robot\\\", \\\"city\\\").\"\n"
             "     }\n"
             "  ]\n"
             "}\n"
             "RULES — you must follow all of these precisely:\n"
             "1. Split voiceover_script into sequential segments of 7 to 9 words each. "
-            "   The 'text' field of each segment must be the exact words from that portion of voiceover_script.\n"
-            "2. Every visual_keyword must be 100% unique across all segments — no keyword may be "
-            "   reused or duplicated. You MUST provide only 1 or 2 simple words for the visual keyword (e.g., \"robot\", \"city\", \"technology\"). DO NOT write long sentences or descriptive phrases, as this breaks the Pexels API search.\n"
-            "3. Generate exactly enough segments to cover the full voiceover_script with no shortages.\n"
-            "4. Do NOT include start_time or end_time fields — timestamps are computed from real audio.\n"
-            "5. Do not return markdown syntax, wrapping blocks, or backticks like ```json.\n"
-            "6. Ensure all numbers are integers and the structure conforms strictly to JSON specification."
+            "   The 'text' field of each segment must be the exact words from that portion of voiceover_script in the target language script.\n"
+            "2. CRITICAL - The fields 'title', 'seo_tags', and 'visual_keyword' MUST ALWAYS be in English, regardless of the language of 'voiceover_script' or the input prompt. "
+            "   The Pexels API cannot search for Hindi or Gujarati words. Generate conceptual English keywords (e.g., 'technology', 'robot', 'business') that represent the meaning of the Hindi/Gujarati text.\n"
+            "3. Every visual_keyword must be 100% unique across all segments — no keyword may be "
+            "   reused or duplicated. You MUST provide only 1 or 2 simple words in English for the visual keyword (e.g., \"robot\", \"city\", \"technology\"). DO NOT write long sentences or descriptive phrases in Hindi/Gujarati, as this breaks the Pexels API search.\n"
+            "4. Generate exactly enough segments to cover the full voiceover_script with no shortages.\n"
+            "5. Do NOT include start_time or end_time fields — timestamps are computed from real audio.\n"
+            "6. Do not return markdown syntax, wrapping blocks, or backticks like ```json.\n"
+            "7. Ensure all numbers are integers and the structure conforms strictly to JSON specification."
         )
 
         full_prompt = f"System Instruction: {system_instruction}\n\nUser Input Prompt: {base_prompt}"

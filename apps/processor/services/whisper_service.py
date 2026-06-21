@@ -165,14 +165,21 @@ class WhisperAlignmentService:
         return path
 
     @staticmethod
-    def _uniform_fallback(timeline: list, total_duration: float = None) -> list:
-        """
-        Fallback: distribute time uniformly across segments when Whisper is unavailable.
-        Uses a fixed 3.5-second-per-chunk estimate if total_duration is unknown.
-        """
+    def _uniform_fallback(timeline: list, total_duration: float = None) -> tuple[list, list]:
+        """Return (enriched_timeline, synthetic_words)."""
         chunk_duration = (total_duration / len(timeline)) if (total_duration and len(timeline)) else 3.5
         enriched = []
+        all_words = []
         for i, chunk in enumerate(timeline):
+            seg_text = chunk.get('text', '')
+            seg_words = seg_text.split()
+            word_dur = chunk_duration / max(len(seg_words), 1) if seg_words else chunk_duration
+            for wi, w in enumerate(seg_words):
+                all_words.append({
+                    "word": w,
+                    "start": round(i * chunk_duration + wi * word_dur, 3),
+                    "end": round(i * chunk_duration + (wi + 1) * word_dur, 3),
+                })
             enriched.append({
                 **chunk,
                 "start_time": round(i * chunk_duration, 3),
@@ -182,7 +189,7 @@ class WhisperAlignmentService:
             f"[WhisperService] Using uniform fallback: {len(enriched)} segments "
             f"at {chunk_duration:.2f}s each."
         )
-        return enriched
+        return enriched, all_words
 
     @staticmethod
     def _extract_words(segments) -> list:
@@ -190,12 +197,20 @@ class WhisperAlignmentService:
         Flatten faster-whisper segment/word objects into a simple list of dicts:
         [{"word": str, "start": float, "end": float}, ...]
         """
+        def _is_indic(word: str) -> bool:
+            return any(
+                0x0900 <= ord(c) <= 0x097F or 0x0A80 <= ord(c) <= 0x0AFF
+                for c in word
+            )
+
         words = []
         for seg in segments:
             if hasattr(seg, 'words') and seg.words:
                 for w in seg.words:
+                    raw_word = w.word.strip()
+                    processed_word = raw_word if _is_indic(raw_word) else raw_word.lower()
                     words.append({
-                        "word":  w.word.strip().lower(),
+                        "word":  processed_word,
                         "start": w.start,
                         "end":   w.end,
                     })
@@ -251,7 +266,7 @@ class WhisperAlignmentService:
         return enriched
 
     @classmethod
-    def align(cls, audio_path: str, timeline: list) -> list:
+    def align(cls, audio_path: str, timeline: list) -> tuple[list, list]:
         """
         Main entry point. Resolves the audio file, runs Whisper transcription with
         word-level timestamps, and returns the timeline enriched with exact audio timestamps.
@@ -261,11 +276,11 @@ class WhisperAlignmentService:
             timeline:   List of Gemini scene dicts with 'text' and 'visual_keyword'.
 
         Returns:
-            Enriched timeline list — each item has 'start_time' and 'end_time' added.
+            tuple: (enriched_timeline, raw_words_timestamps)
         """
         if not timeline:
             logger.warning("[WhisperService] Empty timeline — nothing to align.")
-            return timeline
+            return timeline, []
 
         # In test mode, skip real Whisper inference entirely
         if getattr(settings, 'TESTING', False):
@@ -306,7 +321,7 @@ class WhisperAlignmentService:
             logger.info(
                 f"[WhisperService] Alignment complete: {len(enriched)} scenes mapped to audio timestamps."
             )
-            return enriched
+            return enriched, words
 
         except ImportError:
             logger.error(

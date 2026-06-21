@@ -57,6 +57,19 @@ VOICE_MAP = {
 _DEFAULT_ELEVENLABS_VOICE = "pNInz6obpgDQGcFmaJgB"   # Adam
 _DEFAULT_EDGE_VOICE       = "en-US-ChristopherNeural"
 
+def _detect_script_language(text: str) -> str:
+    """Detect if text contains Hindi, Gujarati, or English script."""
+    has_devanagari = any(0x0900 <= ord(c) <= 0x097F for c in text)
+    has_gujarati = any(0x0A80 <= ord(c) <= 0x0AFF for c in text)
+    if has_devanagari:
+        return "hindi"
+    if has_gujarati:
+        return "gujarati"
+    return "english"
+
+_DEFAULT_HINDI_EDGE_VOICE = "hi-IN-MadhurNeural"
+_DEFAULT_GUJARATI_EDGE_VOICE = "gu-IN-NiranjanNeural"
+
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # Text Normalisation Pre-pass
@@ -109,7 +122,21 @@ class EdgeTTSProvider:
         Render normalised plain text to a WAV file at output_wav_path.
         Raises RuntimeError on failure so the caller can fall through.
         """
-        _, edge_voice = VOICE_MAP.get(voice_id, (_DEFAULT_ELEVENLABS_VOICE, _DEFAULT_EDGE_VOICE))
+        # Detect script language BEFORE voice lookup
+        detected_lang = _detect_script_language(text)
+
+        # Get voice from map or determine appropriate fallback
+        mapping = VOICE_MAP.get(voice_id)
+        if mapping:
+            _, edge_voice = mapping
+        else:
+            # Intelligent fallback based on detected script
+            if detected_lang == "hindi":
+                edge_voice = _DEFAULT_HINDI_EDGE_VOICE
+            elif detected_lang == "gujarati":
+                edge_voice = _DEFAULT_GUJARATI_EDGE_VOICE
+            else:
+                edge_voice = _DEFAULT_EDGE_VOICE
 
         # Normalise text — keep all punctuation intact so Azure Neural can
         # apply its own natural prosodic pauses at ., ,, ?, !

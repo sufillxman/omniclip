@@ -102,7 +102,7 @@ def process_video_render_task(self, project_id):
 
         # ── Step B: Whisper alignment — derive exact timestamps from real audio ──
         raw_timeline = project.json_timeline  # [{chunk_index, text, visual_keyword}, ...]
-        aligned_timeline = WhisperAlignmentService.align(audio_path, raw_timeline)
+        aligned_timeline, real_word_timestamps = WhisperAlignmentService.align(audio_path, raw_timeline)
         logger.info(
             f"[WhisperAlignment] Aligned {len(aligned_timeline)} segments with real audio timestamps."
         )
@@ -161,33 +161,12 @@ def process_video_render_task(self, project_id):
                 logger.error(f"Error probing audio duration or adjusting chunk: {probe_err}")
 
         # ── Step E: Build sentence-aware subtitle chunks for ASS burn-in ──────
-        # sentence_aware_chunk() requires word-level timestamps, which the
-        # WhisperAlignmentService already extracted internally during align().
-        # We re-extract them here from the enriched aligned_timeline by treating
-        # each segment's text as a flat word stream with proportional timestamps.
         subtitle_chunks = []
         try:
-            flat_words = []
-            for seg in aligned_timeline:
-                seg_start  = seg.get('start_time', 0.0)
-                seg_end    = seg.get('end_time',   0.0)
-                seg_text   = seg.get('text', '')
-                seg_words  = seg_text.split()
-                if not seg_words:
-                    continue
-                # Distribute time uniformly across words within this segment
-                word_dur   = (seg_end - seg_start) / len(seg_words)
-                for wi, w in enumerate(seg_words):
-                    flat_words.append({
-                        "word":  w,
-                        "start": round(seg_start + wi * word_dur, 3),
-                        "end":   round(seg_start + (wi + 1) * word_dur, 3),
-                    })
-
-            subtitle_chunks = sentence_aware_chunk(flat_words)
+            subtitle_chunks = sentence_aware_chunk(real_word_timestamps)
             logger.info(
                 f"[Subtitles] Built {len(subtitle_chunks)} sentence-aware subtitle chunks "
-                f"from {len(flat_words)} word timestamps."
+                f"from {len(real_word_timestamps)} word timestamps."
             )
         except Exception as sub_err:
             logger.error(

@@ -73,6 +73,15 @@ def _ass_ts(seconds: float) -> str:
     return f"{h}:{m:02d}:{s:02d}.{cs:02d}"
 
 
+def _contains_indic_script(text: str) -> bool:
+    """Detect Devanagari or Gujarati Unicode characters."""
+    return any(
+        0x0900 <= ord(c) <= 0x097F  # Devanagari block
+        or 0x0A80 <= ord(c) <= 0x0AFF  # Gujarati block
+        for c in text
+    )
+
+
 def _generate_ass_subtitles(subtitle_chunks: list, output_ass_path: str, layout: str = 'landscape') -> str:
     """
     Generates a professional-grade ASS subtitle file from a list of SubtitleChunk
@@ -102,6 +111,20 @@ def _generate_ass_subtitles(subtitle_chunks: list, output_ass_path: str, layout:
     x_pos, y_pos = (540, 1500) if layout == 'vertical' else (960, 850)
     pos_tag = f"\\an2\\pos({x_pos},{y_pos})\\org({x_pos},{y_pos})"
 
+    # Detect if any chunk contains Indic script
+    has_indic = False
+    for chunk in subtitle_chunks:
+        w_list = chunk.words if hasattr(chunk, 'words') else chunk.get('words', [])
+        if _contains_indic_script(" ".join(w_list)):
+            has_indic = True
+            break
+
+    # Choose font based on script
+    font_name = "Nirmala UI" if has_indic else _ASS_FONT_NAME
+
+    # Disable bounce animation for Indic scripts
+    bounce_tag = "" if has_indic else f"{{\\fscx110\\fscy110\\t(0,{_BOUNCE_ENTRY_MS},\\fscx100\\fscy100)}}"
+
     # ── ASS Script Header ────────────────────────────────────────────────────────
     header = (
         "[Script Info]\n"
@@ -120,7 +143,7 @@ def _generate_ass_subtitles(subtitle_chunks: list, output_ass_path: str, layout:
         "ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, "
         "Alignment, MarginL, MarginR, MarginV, Encoding\n"
         # Bold (-1), no italic, no underline, scale 100/100, spacing 0, border 2, shadow 0
-        f"Style: Default,{_ASS_FONT_NAME},{_ASS_FONT_SIZE},"
+        f"Style: Default,{font_name},{_ASS_FONT_SIZE},"
         f"{_ASS_TEXT_COLOUR},&H000000FF&,&H00000000&,&H00000000&,"
         f"-1,0,0,0,100,100,0,0,1,2,0,{_ASS_ALIGNMENT},10,10,{_ASS_MARGIN_V},1\n"
         "\n"
@@ -145,16 +168,12 @@ def _generate_ass_subtitles(subtitle_chunks: list, output_ass_path: str, layout:
             continue
 
         chunk_start_ts = _ass_ts(start_time)
-        chunk_end_ts   = _ass_ts(end_time)
+        # Ensure minimum 0.5s duration for Indic script chunks to allow shaping
+        display_end_time = end_time
+        if has_indic and (end_time - start_time) < 0.5:
+            display_end_time = max(end_time, start_time + 0.5)
+        chunk_end_ts   = _ass_ts(display_end_time)
         display_text   = " ".join(words)
-
-        # Build ASS override tags:
-        #   \fscx110\fscy110       = start at 110% scale (overshoot)
-        #   \t(0,{ms},\fscx100...) = transition to 100% in BOUNCE_ENTRY_MS
-        bounce_tag = (
-            f"{{\\fscx110\\fscy110"
-            f"\\t(0,{_BOUNCE_ENTRY_MS},\\fscx100\\fscy100)}}"
-        )
 
         # ── Three-layer rendering for this chunk ──────────────────────────────
         for layer, blur, colour, alpha, shad, bord in _ASS_LAYERS:
